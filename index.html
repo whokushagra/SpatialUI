@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XR Spatial UI Designer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Three.js -->
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+
+<body>
+    <!-- Main Application Container -->
+    <div class="app-container">
+        <!-- Top Menu Bar -->
+        <div class="menu-bar">
+            <div class="menu-logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+                </svg>
+                <span class="logo-text">XR Spatial UI</span>
+            </div>
+            <nav class="menu-items">
+                <div class="menu-item">
+                    File
+                    <div class="menu-dropdown">
+                        <div class="menu-option">New <span class="shortcut">⌘N</span></div>
+                        <div class="menu-option">Open <span class="shortcut">⌘O</span></div>
+                        <div class="menu-option">Save <span class="shortcut">⌘S</span></div>
+                        <div class="menu-divider"></div>
+                        <div class="menu-option">Export...</div>
+                    </div>
+                </div>
+                <div class="menu-item">Edit</div>
+                <div class="menu-item">View</div>
+                <div class="menu-item">Transform</div>
+                <div class="menu-item">Object</div>
+                <div class="menu-item menu-item-highlight">Spatial</div>
+                <div class="menu-item">Plugins</div>
+                <div class="menu-item">Help</div>
+            </nav>
+            <div class="menu-actions">
+                <button class="icon-button" title="Share">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path
+                            d="M13 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM3 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM13 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"
+                            stroke="currentColor" stroke-width="1.5" />
+                        <path d="M4.5 8.5l7-3M4.5 7.5l7 3" stroke="currentColor" stroke-width="1.5" />
+                    </svg>
+                </button>
+                <button class="btn-primary">Preview on Device</button>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- Left Sidebar -->
+            <div class="sidebar sidebar-left">
+                <div class="sidebar-tabs">
+                    <button class="sidebar-tab active" data-tab="layers">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <rect x="2" y="2" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
+                            <rect x="9" y="2" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
+                            <rect x="2" y="9" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
+                        </svg>
+                        Layers
+                    </button>
+                    <button class="sidebar-tab" data-tab="assets">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5" />
+                            <circle cx="6" cy="6" r="1.5" fill="currentColor" />
+                            <path d="M2 12l4-4 2 2 4-4 2 2v4H2z" fill="currentColor" opacity="0.5" />
+                        </svg>
+                        Assets
+                    </button>
+                    <button class="sidebar-tab" data-tab="colors">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5" />
+                            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" />
+                        </svg>
+                        Colors
+                    </button>
+                    <button class="sidebar-tab" data-tab="pages">
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"
+                                stroke="currentColor" stroke-width="1.5" />
+                        </svg>
+                        Pages
+                    </button>
+                </div>
+
+                <div class="sidebar-content">
+                    <!-- Layers Tab Content -->
+                    <div class="tab-content active" id="layers-tab">
+                        <div class="tab-header">
+                            <input type="text" class="search-input" placeholder="Search layers...">
+                        </div>
+                        <div class="layers-tree">
+                            <div class="layer-item">
+                                <span class="layer-icon">📄</span>
+                                <span class="layer-name">Page 1</span>
+                            </div>
+                            <div class="layer-item layer-nested">
+                                <span class="layer-toggle">▼</span>
+                                <span class="layer-icon">🎭</span>
+                                <span class="layer-name">Main Menu</span>
+                            </div>
+                            <div class="layer-item layer-nested-2">
+                                <span class="layer-icon">🔘</span>
+                                <span class="layer-name">Button: Start</span>
+                            </div>
+                            <div class="layer-item layer-nested-2">
+                                <span class="layer-icon">🔘</span>
+                                <span class="layer-name">Button: Settings</span>
+                            </div>
+                            <div class="layer-item layer-nested-2">
+                                <span class="layer-icon">📝</span>
+                                <span class="layer-name">Text: "Welcome"</span>
+                            </div>
+                            <div class="layer-item layer-nested">
+                                <span class="layer-toggle">▼</span>
+                                <span class="layer-icon">🎭</span>
+                                <span class="layer-name">3D Display</span>
+                            </div>
+                            <div class="layer-item layer-nested-2">
+                                <span class="layer-icon">📦</span>
+                                <span class="layer-name">Mesh: Character</span>
+                            </div>
+                            <div class="layer-item layer-nested-2">
+                                <span class="layer-icon">💡</span>
+                                <span class="layer-name">Light: Key Light</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Assets Tab Content -->
+                    <div class="tab-content" id="assets-tab">
+                        <div class="tab-header">
+                            <h3>Components</h3>
+                            <button class="icon-button">+</button>
+                        </div>
+                        <div class="assets-grid">
+                            <div class="asset-card">
+                                <div class="asset-preview">
+                                    <svg width="40" height="40" viewBox="0 0 40 40">
+                                        <rect x="5" y="5" width="30" height="30" rx="4" fill="var(--color-primary)"
+                                            opacity="0.2" stroke="var(--color-primary)" stroke-width="2" />
+                                    </svg>
+                                </div>
+                                <div class="asset-name">Button</div>
+                            </div>
+                            <div class="asset-card">
+                                <div class="asset-preview">
+                                    <svg width="40" height="40" viewBox="0 0 40 40">
+                                        <rect x="5" y="8" width="30" height="24" rx="2" fill="var(--color-accent)"
+                                            opacity="0.2" stroke="var(--color-accent)" stroke-width="2" />
+                                    </svg>
+                                </div>
+                                <div class="asset-name">Panel</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Colors Tab Content -->
+                    <div class="tab-content" id="colors-tab">
+                        <div class="tab-header">
+                            <h3>Color Palette</h3>
+                        </div>
+                        <div class="color-swatches">
+                            <div class="color-swatch" style="background: #6366f1;"></div>
+                            <div class="color-swatch" style="background: #8b5cf6;"></div>
+                            <div class="color-swatch" style="background: #ec4899;"></div>
+                            <div class="color-swatch" style="background: #f59e0b;"></div>
+                            <div class="color-swatch" style="background: #10b981;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Pages Tab Content -->
+                    <div class="tab-content" id="pages-tab">
+                        <div class="tab-header">
+                            <h3>Pages</h3>
+                            <button class="icon-button">+</button>
+                        </div>
+                        <div class="pages-list">
+                            <div class="page-item active">
+                                <span class="page-icon">📄</span>
+                                <span class="page-name">Page 1</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center Viewport -->
+            <div class="viewport-container">
+                <div class="viewport-header">
+                    <div class="viewport-info">
+                        <span class="viewport-label">Position:</span>
+                        <span class="viewport-value">X: 0.0m, Y: 1.6m, Z: -2.5m</span>
+                        <span class="viewport-separator">|</span>
+                        <span class="viewport-label">Device:</span>
+                        <select class="viewport-select">
+                            <option>Meta Quest 3</option>
+                            <option>Apple Vision Pro</option>
+                            <option>Generic XR</option>
+                        </select>
+                    </div>
+                    <div class="viewport-controls">
+                        <button class="icon-button" title="Top View">⬆️</button>
+                        <button class="icon-button" title="Front View">➡️</button>
+                        <button class="icon-button" title="Side View">↗️</button>
+                        <button class="icon-button active" title="Isometric">🔲</button>
+                        <div class="control-divider"></div>
+                        <button class="icon-button" title="Toggle Grid">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M2 2v12h12M2 6h12M2 10h12M6 2v12M10 2v12" stroke="currentColor"
+                                    stroke-width="1.5" />
+                            </svg>
+                        </button>
+                        <button class="icon-button" title="Toggle Safe Zone">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"
+                                    stroke-dasharray="2 2" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="viewport" id="viewport-3d">
+                    <!-- 3D Canvas will be rendered here -->
+                    <div class="viewport-placeholder">
+                        <div class="placeholder-content">
+                            <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
+                                <path d="M40 10L10 25L40 40L70 25L40 10Z" fill="currentColor" opacity="0.3" />
+                                <path d="M10 55L40 70L70 55" stroke="currentColor" stroke-width="3" />
+                                <path d="M10 40L40 55L70 40" stroke="currentColor" stroke-width="3" />
+                            </svg>
+                            <h3>3D Viewport</h3>
+                            <p>Your spatial canvas will appear here</p>
+                            <p class="placeholder-hint">Use toolbar below to add objects</p>
+                        </div>
+
+                        <!-- Grid Preview -->
+                        <div class="grid-overlay">
+                            <svg width="100%" height="100%" style="position: absolute; top: 0; left: 0; opacity: 0.1;">
+                                <defs>
+                                    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                                        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor"
+                                            stroke-width="1" />
+                                    </pattern>
+                                </defs>
+                                <rect width="100%" height="100%" fill="url(#grid)" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar - Properties Panel -->
+            <div class="sidebar sidebar-right">
+                <div class="sidebar-header">
+                    <h3>Properties</h3>
+                </div>
+
+                <div class="properties-content">
+                    <div class="empty-state">
+                        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                            <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2" opacity="0.3" />
+                            <path d="M24 16v16M16 24h16" stroke="currentColor" stroke-width="2" />
+                        </svg>
+                        <p>Select an object to view properties</p>
+                    </div>
+
+                    <!-- This will be populated when an object is selected -->
+                    <div class="properties-sections" style="display: none;">
+                        <div class="property-section">
+                            <div class="property-section-header">
+                                <span>Transform</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <div class="property-group">
+                                    <label>Position (meters)</label>
+                                    <div class="property-row">
+                                        <div class="input-with-label">
+                                            <span class="input-label">X</span>
+                                            <input type="number" value="0.0" step="0.1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Y</span>
+                                            <input type="number" value="1.6" step="0.1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Z</span>
+                                            <input type="number" value="-2.5" step="0.1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="property-group">
+                                    <label>Rotation (degrees)</label>
+                                    <div class="property-row">
+                                        <div class="input-with-label">
+                                            <span class="input-label">X</span>
+                                            <input type="number" value="0" step="1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Y</span>
+                                            <input type="number" value="45" step="1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Z</span>
+                                            <input type="number" value="0" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="property-group">
+                                    <label>Scale</label>
+                                    <div class="property-row">
+                                        <div class="input-with-label">
+                                            <span class="input-label">X</span>
+                                            <input type="number" value="1.0" step="0.1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Y</span>
+                                            <input type="number" value="1.0" step="0.1">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label">Z</span>
+                                            <input type="number" value="1.0" step="0.1">
+                                        </div>
+                                    </div>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" checked>
+                                        <span>Lock Proportions</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Appearance Section (NEW!) -->
+                        <div class="property-section">
+                            <div class="property-section-header">
+                                <span>Appearance</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <div class="property-group">
+                                    <label>Color</label>
+                                    <div class="color-picker-wrapper">
+                                        <input type="color" id="object-color" value="#6366f1" class="color-input">
+                                        <span class="color-hex" id="color-hex-display">#6366f1</span>
+                                    </div>
+                                </div>
+
+                                <div class="property-group">
+                                    <label>Opacity</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="object-opacity" min="0" max="100" value="100"
+                                            class="slider">
+                                        <span class="slider-value"><span id="opacity-value">100</span>%</span>
+                                    </div>
+                                </div>
+
+                                <div class="property-group">
+                                    <label>Material Type</label>
+                                    <div class="material-selector">
+                                        <button class="material-option active" data-material="standard">
+                                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                                <rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"
+                                                    opacity="0.5" />
+                                            </svg>
+                                            <span>Flat</span>
+                                        </button>
+                                        <button class="material-option" data-material="metallic">
+                                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                                <circle cx="10" cy="10" r="6" fill="currentColor" opacity="0.7" />
+                                                <circle cx="8" cy="8" r="2" fill="white" opacity="0.8" />
+                                            </svg>
+                                            <span>Metallic</span>
+                                        </button>
+                                        <button class="material-option" data-material="glass">
+                                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                                <rect x="4" y="4" width="12" height="12" rx="2" stroke="currentColor"
+                                                    stroke-width="2" fill="currentColor" opacity="0.2" />
+                                            </svg>
+                                            <span>Glass</span>
+                                        </button>
+                                        <button class="material-option" data-material="glow">
+                                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                                <circle cx="10" cy="10" r="4" fill="currentColor" />
+                                                <circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1"
+                                                    opacity="0.5" />
+                                                <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1"
+                                                    opacity="0.3" />
+                                            </svg>
+                                            <span>Glow</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="property-group" id="metalness-group">
+                                    <label>Metalness</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="object-metalness" min="0" max="100" value="30"
+                                            class="slider">
+                                        <span class="slider-value"><span id="metalness-value">30</span>%</span>
+                                    </div>
+                                </div>
+
+                                <div class="property-group" id="roughness-group">
+                                    <label>Roughness</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="object-roughness" min="0" max="100" value="70"
+                                            class="slider">
+                                        <span class="slider-value"><span id="roughness-value">70</span>%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Lighting Section (NEW!) -->
+                        <div class="property-section" id="lighting-section">
+                            <div class="property-section-header">
+                                <span>Lighting</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <div class="property-group">
+                                    <label>Ambient Light</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="ambient-intensity" min="0" max="100" value="60" class="slider">
+                                        <span class="slider-value"><span id="ambient-intensity-value">60</span>%</span>
+                                    </div>
+                                    <div class="color-picker-wrapper" style="margin-top: 8px;">
+                                        <input type="color" id="ambient-color" value="#ffffff" class="color-input">
+                                        <span class="color-hex" id="ambient-color-hex">#ffffff</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="property-group">
+                                    <label>Key Light (Directional)</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="key-light-intensity" min="0" max="200" value="80" class="slider">
+                                        <span class="slider-value"><span id="key-light-intensity-value">80</span>%</span>
+                                    </div>
+                                    <div class="color-picker-wrapper" style="margin-top: 8px;">
+                                        <input type="color" id="key-light-color" value="#ffffff" class="color-input">
+                                        <span class="color-hex" id="key-light-color-hex">#ffffff</span>
+                                    </div>
+                                    <label class="checkbox-label" style="margin-top: 8px;">
+                                        <input type="checkbox" id="shadows-enabled" checked>
+                                        <span>Enable Shadows</span>
+                                    </label>
+                                </div>
+                                
+                                <div class="property-group">
+                                    <button class="btn-secondary" id="add-point-light" style="width: 100%;">
+                                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="margin-right: 6px;">
+                                            <circle cx="8" cy="8" r="4" fill="currentColor" opacity="0.5"/>
+                                            <circle cx="8" cy="8" r="2" fill="currentColor"/>
+                                            <path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M12.5 3.5L11 5M5 11L3.5 12.5" stroke="currentColor" stroke-width="1.5"/>
+                                        </svg>
+                                        Add Point Light
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Toolbar -->
+        <div class="toolbar">
+            <div class="toolbar-tools">
+                <button class="tool-button active" title="Select (V)" data-tool="select">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M3 3l7 14 2-6 6-2L3 3z" stroke="currentColor" stroke-width="1.5" fill="none" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="Frame (F)" data-tool="frame">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <rect x="4" y="4" width="12" height="12" stroke="currentColor" stroke-width="1.5" fill="none" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="Text (T)" data-tool="text">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M5 4h10M10 4v12M7 16h6" stroke="currentColor" stroke-width="1.5" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="Shape (R)" data-tool="shape">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" fill="none" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="3D Box (B)" data-tool="box">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 3L4 6v8l6 3 6-3V6l-6-3z" stroke="currentColor" stroke-width="1.5" fill="none" />
+                        <path d="M4 6l6 3m0 0l6-3m-6 3v8" stroke="currentColor" stroke-width="1.5" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="Image (I)" data-tool="image">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"
+                            fill="none" />
+                        <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+                        <path d="M3 14l4-4 2 2 4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" />
+                    </svg>
+                </button>
+                <div class="toolbar-divider"></div>
+                <button class="tool-button" title="Comment (C)" data-tool="comment">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M17 7v6a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h10a2 2 0 012 2v2z" stroke="currentColor"
+                            stroke-width="1.5" fill="none" />
+                    </svg>
+                </button>
+                <button class="tool-button" title="Measure" data-tool="measure">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M3 17L17 3M5 17l2-2M9 17l2-2M13 17l2-2M3 13l2-2M3 9l2-2M3 5l2-2" stroke="currentColor"
+                            stroke-width="1.5" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="toolbar-info">
+                <div class="zoom-control">
+                    <button class="icon-button">−</button>
+                    <span>100%</span>
+                    <button class="icon-button">+</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+
+</html>
