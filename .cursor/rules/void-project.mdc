@@ -1,0 +1,117 @@
+---
+description: Void project context, product vision, and coding guidelines
+globs:
+alwaysApply: true
+---
+
+# Void — Designer-First XR UI Platform
+
+## What is this project?
+
+Void is a web-based design tool — like Figma, but for building XR (VR/AR) app interfaces.
+Designers can visually create UI screens, link them together (Button A → Screen B), connect
+buttons to game events, and eventually preview and deploy to Meta Quest or Apple Vision Pro.
+**No coding required for the end user.**
+
+The project owner (Kushagra) is a designer, not a developer. Keep all code decisions
+oriented toward building a clean, designer-friendly tool. Avoid over-engineering.
+
+---
+
+## Tech Stack
+
+- **Build tool:** Vite (`npm run dev` starts at localhost:8000)
+- **3D engine:** Three.js v0.160 (installed via npm, not CDN)
+- **Language:** Vanilla JavaScript (ES6 modules) — no React, no Vue, no TypeScript
+- **Styling:** CSS3 with custom properties (`styles.css`)
+- **Entry point:** `index.html` loads `main.js`
+
+---
+
+## Current Code Structure
+
+**`main.js`** (~1150 lines, single file):
+- All app state lives in one `state` object at the top
+- `initialize3DViewport()` — sets up Three.js scene, camera, renderer, lights
+- `setupEventListeners()` — wires all UI event handlers using `data-*` attributes
+- `updatePropertiesPanel()` — refreshes the right panel when an object is selected
+- `showNotification(message, type)` — toast messages ('success' | 'error' | 'info')
+- Three.js objects that users can click/select → must be pushed to `state.selectableObjects`
+
+**`index.html`** — All editor HTML (sidebar, 3D viewport, properties panel, toolbar)
+
+**`styles.css`** — All styling. Uses CSS custom properties for colors, spacing, dark theme.
+
+### What's Already Working
+- Figma-like editor layout with left sidebar, center 3D viewport, right properties panel, bottom toolbar
+- Real Three.js 3D scene: scene, PerspectiveCamera, WebGLRenderer, OrbitControls, TransformControls
+- Object creation: boxes, spheres, cylinders
+- Object selection via raycasting; transform gizmos (Move = G, Rotate = R, Scale = S)
+- Four material types: Flat, Metallic, Glass, Glow
+- Lighting: ambient light, directional key light, user-created point lights
+
+---
+
+## What Phase 1 MVP Needs — Build These Next
+
+These are the core Void features that aren't built yet. Work through them in order:
+
+### 1. Screens System
+XR experiences have multiple "screens" — a Main Menu, a Settings screen, a Game Over screen.
+Each screen is an independent layout placed in 3D space.
+- Add a "Screens" panel in the left sidebar (replace or augment the "Pages" tab)
+- Users can create, rename, and switch between screens
+- Each screen stores its own set of UI components independently
+
+### 2. XR UI Components Library
+Instead of generic 3D primitives, Void needs actual XR interface building blocks:
+- **Button** — flat rectangle with label text, a hover state, and a click action slot
+- **Panel** — background container for grouping buttons and text
+- **Text Label** — 3D text displayed in space (use Three.js TextGeometry or a billboard mesh)
+- **Image Placeholder** — a rectangle that represents where an image/icon goes
+These should live in the Assets/Components tab in the left sidebar (drag to add).
+
+### 3. Screen Linking
+The killer feature that makes Void useful:
+- Select a Button component → in the Properties panel, show a dropdown: "On Click → [Screen Name]"
+- Store this connection in the component's data
+- In a "Flow View" (future), draw connector lines between screens
+
+### 4. Spatial Properties Panel
+Replace the raw X/Y/Z transform inputs with XR-relevant positioning:
+- **Distance from user** (meters) — how far the UI floats in front of the user
+- **Height** (meters from floor)
+- **Facing angle** (degrees — does it face the user, or is it angled?)
+This is how XR designers think, not in raw world coordinates.
+
+### 5. JSON Export / Save Scene
+- Add a "Save" button (File menu) that downloads the scene as a `.void.json` file
+- JSON structure: `{ screens: [{ name, components: [{ type, position, properties, connections }] }] }`
+- This becomes the foundation for the Unity bridge in Phase 2
+
+---
+
+## What NOT to Build Yet
+
+Do not build these until Phase 1 is complete:
+- Live Quest preview / wireless streaming (Phase 2)
+- Unity export / bridge (Phase 2)
+- Apple Vision Pro support (Phase 2)
+- Any backend, database, or server
+- User accounts or cloud save
+- Multiplayer / collaboration
+
+---
+
+## Code Conventions
+
+- Keep all mutable state in the `state` object — don't create floating module-level variables
+- New UI in HTML → wire events in `setupEventListeners()`
+- New 3D objects → create in named functions like `createXRButton()`, `createPanel()`
+- Use `// ===== SECTION NAME =====` comments to organize main.js sections
+- If main.js grows beyond ~2000 lines, suggest splitting into focused modules (viewport.js, components.js, etc.)
+- Always call `showNotification()` to give the user feedback after an action
+
+## Updating Project Status
+After completing any feature from the Phase 1 list, update `PROJECT_STATUS.md` to check it off.
+Keep that file accurate — it's what Kushagra reads to understand progress.
