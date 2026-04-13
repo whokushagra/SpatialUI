@@ -54,15 +54,15 @@ These features are fully working in the app right now:
 
 These are the features that turn this from a 3D sandbox into a real XR design tool:
 
-- [ ] **Screens System** — Create multiple named XR screens ("Main Menu", "Settings", "Game Over"). Each screen is its own layout. Switch between them in the editor just like switching pages in Figma.
+- [x] **Screens System** — Multiple named screens; each has its own `THREE.Group` in the scene. Use the **Screens** tab to add screens, switch the active screen, and double‑click a screen name to rename. Only the active screen’s objects are visible while editing.
 
-- [ ] **XR UI Components** — A library of actual interface pieces: Button (with label), Panel (background container), Text Label, Image Placeholder. These replace the raw 3D boxes — they're what real XR UIs are made of.
+- [x] **XR UI Components** — Under **Assets**, add **Button**, **Panel**, **Text Label**, and **Image** (placeholder). Buttons use a canvas label; primitives from the toolbar still work for blocking out volume.
 
-- [ ] **Screen Linking** — The core Void feature: click a button, then in the Properties panel say "When clicked → go to Settings screen." No code. The button now knows where it leads.
+- [x] **Screen Linking** — Select a **Button** → **Properties → Interaction → On click → screen** stores `onClickScreenId` on the component (runtime navigation is Phase 2).
 
-- [ ] **Spatial Properties** — Show positioning in XR terms: "2 meters in front of user, 1.6m high, facing the user." Not confusing X/Y/Z coordinates — designer language.
+- [x] **Spatial Properties** — **Spatial (XR)** section: distance (depth in front, −Z), side offset (X), height (Y), and facing (rotation Y). Expand **World position & rotation** for full XYZ when needed.
 
-- [ ] **Save to File** — Export your design as a `.void.json` file. This is the first step toward Unity integration.
+- [x] **Save to File** — **File → Save .void.json** or **⌘S / Ctrl+S** downloads `scene.void.json` with screens and component data (`version`, `screens[].components[]`).
 
 ---
 

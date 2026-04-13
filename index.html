@@ -12,7 +12,53 @@
 </head>
 
 <body>
-    <!-- Main Application Container -->
+    <!-- Dummy onboarding (paper prototype): Login → Dashboard → existing editor unchanged inside #phase-editor -->
+    <nav id="app-top-nav" class="app-top-nav" hidden aria-label="App navigation">
+        <div class="app-top-nav-inner">
+            <span class="app-top-nav-brand" aria-hidden="true">Void</span>
+            <button type="button" class="app-top-nav-link" id="app-nav-dashboard">Dashboard</button>
+        </div>
+    </nav>
+
+    <section id="phase-login" class="onboarding-phase onboarding-login" aria-label="Login">
+        <div class="onboarding-card">
+            <div class="onboarding-logo" aria-hidden="true">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+                </svg>
+            </div>
+            <h1 class="onboarding-title">Void</h1>
+            <p class="onboarding-subtitle">Welcome to Void</p>
+            <button type="button" class="btn-primary onboarding-primary-btn" id="btn-onboarding-login">Log In</button>
+        </div>
+    </section>
+
+    <section id="phase-dashboard" class="onboarding-phase onboarding-dashboard" hidden aria-label="Dashboard">
+        <header class="dashboard-header">
+            <div class="dashboard-brand">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+                </svg>
+                <span class="dashboard-brand-text">Void</span>
+            </div>
+            <h2 class="dashboard-heading">My Projects</h2>
+        </header>
+        <div class="dashboard-body">
+            <ul class="dashboard-project-list" aria-label="Dummy projects">
+                <li class="dashboard-project-card"><span class="dashboard-project-name">Meditation App</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
+                <li class="dashboard-project-card"><span class="dashboard-project-name">Product Demo</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
+                <li class="dashboard-project-card"><span class="dashboard-project-name">XR Workshop</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
+            </ul>
+            <button type="button" class="btn-primary dashboard-create-btn" id="btn-onboarding-create-project">Create New Project</button>
+        </div>
+    </section>
+
+    <div id="phase-editor" class="phase-editor-wrap" hidden>
+    <!-- Main Application Container (unchanged — full 3D editor) -->
     <div class="app-container">
         <!-- Top Menu Bar -->
         <div class="menu-bar">
@@ -30,7 +76,7 @@
                     <div class="menu-dropdown">
                         <div class="menu-option">New <span class="shortcut">⌘N</span></div>
                         <div class="menu-option">Open <span class="shortcut">⌘O</span></div>
-                        <div class="menu-option">Save <span class="shortcut">⌘S</span></div>
+                        <div class="menu-option" id="menu-save-void" data-action="save-void">Save .void.json <span class="shortcut">⌘S</span></div>
                         <div class="menu-divider"></div>
                         <div class="menu-option">Export...</div>
                     </div>
@@ -44,6 +90,17 @@
                 <div class="menu-item">Help</div>
             </nav>
             <div class="menu-actions">
+                <!-- Prominent Design ↔ Prototype (Play) toggle — same bar as Spatial Preview & device preview -->
+                <div class="editor-mode-toggle editor-mode-toggle--prominent" role="group" aria-label="Design Mode or Prototype Mode">
+                    <button type="button" class="mode-pill active" id="btn-mode-design" aria-pressed="true" title="Edit layout, layers, and properties">Design Mode</button>
+                    <button type="button" class="mode-pill" id="btn-mode-prototype" aria-pressed="false" title="Play prototype — buttons jump to linked screens">Prototype Mode</button>
+                </div>
+                <button type="button" class="icon-button" id="btn-spatial-preview" title="Preview in Space — AR over device camera">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                </button>
                 <button class="icon-button" title="Share">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                         <path
@@ -84,12 +141,12 @@
                         </svg>
                         Colors
                     </button>
-                    <button class="sidebar-tab" data-tab="pages">
+                    <button class="sidebar-tab" data-tab="screens">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                             <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"
                                 stroke="currentColor" stroke-width="1.5" />
                         </svg>
-                        Pages
+                        Screens
                     </button>
                 </div>
 
@@ -99,41 +156,8 @@
                         <div class="tab-header">
                             <input type="text" class="search-input" placeholder="Search layers...">
                         </div>
-                        <div class="layers-tree">
-                            <div class="layer-item">
-                                <span class="layer-icon">📄</span>
-                                <span class="layer-name">Page 1</span>
-                            </div>
-                            <div class="layer-item layer-nested">
-                                <span class="layer-toggle">▼</span>
-                                <span class="layer-icon">🎭</span>
-                                <span class="layer-name">Main Menu</span>
-                            </div>
-                            <div class="layer-item layer-nested-2">
-                                <span class="layer-icon">🔘</span>
-                                <span class="layer-name">Button: Start</span>
-                            </div>
-                            <div class="layer-item layer-nested-2">
-                                <span class="layer-icon">🔘</span>
-                                <span class="layer-name">Button: Settings</span>
-                            </div>
-                            <div class="layer-item layer-nested-2">
-                                <span class="layer-icon">📝</span>
-                                <span class="layer-name">Text: "Welcome"</span>
-                            </div>
-                            <div class="layer-item layer-nested">
-                                <span class="layer-toggle">▼</span>
-                                <span class="layer-icon">🎭</span>
-                                <span class="layer-name">3D Display</span>
-                            </div>
-                            <div class="layer-item layer-nested-2">
-                                <span class="layer-icon">📦</span>
-                                <span class="layer-name">Mesh: Character</span>
-                            </div>
-                            <div class="layer-item layer-nested-2">
-                                <span class="layer-icon">💡</span>
-                                <span class="layer-name">Light: Key Light</span>
-                            </div>
+                        <div class="layers-tree" id="layers-tree">
+                            <div class="layer-empty" id="layers-empty">No objects on this screen yet.</div>
                         </div>
                     </div>
 
@@ -143,8 +167,8 @@
                             <h3>Components</h3>
                             <button class="icon-button">+</button>
                         </div>
-                        <div class="assets-grid">
-                            <div class="asset-card">
+                        <div class="assets-grid" id="assets-components">
+                            <div class="asset-card" data-component="button" title="Add Button">
                                 <div class="asset-preview">
                                     <svg width="40" height="40" viewBox="0 0 40 40">
                                         <rect x="5" y="5" width="30" height="30" rx="4" fill="var(--color-primary)"
@@ -153,7 +177,7 @@
                                 </div>
                                 <div class="asset-name">Button</div>
                             </div>
-                            <div class="asset-card">
+                            <div class="asset-card" data-component="panel" title="Add Panel">
                                 <div class="asset-preview">
                                     <svg width="40" height="40" viewBox="0 0 40 40">
                                         <rect x="5" y="8" width="30" height="24" rx="2" fill="var(--color-accent)"
@@ -161,6 +185,24 @@
                                     </svg>
                                 </div>
                                 <div class="asset-name">Panel</div>
+                            </div>
+                            <div class="asset-card" data-component="text" title="Add Text Label">
+                                <div class="asset-preview">
+                                    <svg width="40" height="40" viewBox="0 0 40 40">
+                                        <path d="M10 10h20M20 10v20M14 30h12" stroke="var(--color-text-primary)" stroke-width="2" fill="none"/>
+                                    </svg>
+                                </div>
+                                <div class="asset-name">Text Label</div>
+                            </div>
+                            <div class="asset-card" data-component="image" title="Add Image Placeholder">
+                                <div class="asset-preview">
+                                    <svg width="40" height="40" viewBox="0 0 40 40">
+                                        <rect x="6" y="8" width="28" height="24" rx="2" stroke="var(--color-border)" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
+                                        <circle cx="14" cy="16" r="2" fill="var(--color-text-muted)"/>
+                                        <path d="M8 28l6-6 4 4 8-8 6 6" stroke="var(--color-text-muted)" stroke-width="1.5" fill="none"/>
+                                    </svg>
+                                </div>
+                                <div class="asset-name">Image</div>
                             </div>
                         </div>
                     </div>
@@ -179,18 +221,14 @@
                         </div>
                     </div>
 
-                    <!-- Pages Tab Content -->
-                    <div class="tab-content" id="pages-tab">
+                    <!-- Screens Tab Content -->
+                    <div class="tab-content" id="screens-tab">
                         <div class="tab-header">
-                            <h3>Pages</h3>
-                            <button class="icon-button">+</button>
+                            <h3>Screens</h3>
+                            <button type="button" class="icon-button" id="btn-add-screen" title="New screen">+</button>
                         </div>
-                        <div class="pages-list">
-                            <div class="page-item active">
-                                <span class="page-icon">📄</span>
-                                <span class="page-name">Page 1</span>
-                            </div>
-                        </div>
+                        <p class="tab-hint" style="font-size: 12px; color: var(--color-text-muted); margin: 0 0 8px 0;">Each screen is its own layout. Switch screens to edit them.</p>
+                        <div class="pages-list" id="screens-list"></div>
                     </div>
                 </div>
             </div>
@@ -210,18 +248,20 @@
                         </select>
                     </div>
                     <div class="viewport-controls">
-                        <button class="icon-button" title="Top View">⬆️</button>
-                        <button class="icon-button" title="Front View">➡️</button>
-                        <button class="icon-button" title="Side View">↗️</button>
-                        <button class="icon-button active" title="Isometric">🔲</button>
+                        <button type="button" class="icon-button" data-view-preset="top" title="Top View">⬆️</button>
+                        <button type="button" class="icon-button" data-view-preset="front" title="Front View">➡️</button>
+                        <button type="button" class="icon-button" data-view-preset="side" title="Side View">↗️</button>
+                        <button type="button" class="icon-button active" data-view-preset="isometric" title="Isometric">🔲</button>
                         <div class="control-divider"></div>
-                        <button class="icon-button" title="Toggle Grid">
+                        <button type="button" class="icon-button" id="btn-view-mode-toggle" title="2D: orthographic canvas — drag & corner-resize like Figma (no gizmo). 3D: full gizmos.">2D</button>
+                        <div class="control-divider"></div>
+                        <button type="button" class="icon-button" id="viewport-toggle-grid" title="Toggle Grid">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                                 <path d="M2 2v12h12M2 6h12M2 10h12M6 2v12M10 2v12" stroke="currentColor"
                                     stroke-width="1.5" />
                             </svg>
                         </button>
-                        <button class="icon-button" title="Toggle Safe Zone">
+                        <button type="button" class="icon-button" id="viewport-toggle-safe" title="Toggle Safe Zone">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                                 <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"
                                     stroke-dasharray="2 2" />
@@ -230,7 +270,12 @@
                     </div>
                 </div>
 
-                <div class="viewport" id="viewport-3d">
+                <!-- touch-action:none keeps pointer drag (Figma-style 2D / spatial preview) working on mobile -->
+                <div class="viewport" id="viewport-3d" style="touch-action: none;">
+                    <div class="viewport-mode-badge" id="viewport-mode-badge">3D</div>
+                    <!-- Floating exit — visible only in Prototype Mode (see setEditorMode in main.js) -->
+                    <button type="button" class="btn-secondary prototype-exit-floating" id="btn-exit-prototype"
+                        style="display: none;" aria-hidden="true" title="Stop prototype and return to Design Mode">Exit Prototype</button>
                     <!-- 3D Canvas will be rendered here -->
                     <div class="viewport-placeholder">
                         <div class="placeholder-content">
@@ -279,66 +324,180 @@
                     <div class="properties-sections" style="display: none;">
                         <div class="property-section">
                             <div class="property-section-header">
-                                <span>Transform</span>
+                                <span>Spatial (XR)</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <p class="form-hint" style="font-size: 11px; color: var(--color-text-muted); margin: 0 0 8px 0;">User at origin, looking down −Z. Distance = depth in front; height = Y from floor.</p>
+                                <div class="property-group">
+                                    <label>Distance (m) · Side (m) · Height (m)</label>
+                                    <div class="property-row">
+                                        <div class="input-with-label">
+                                            <span class="input-label" title="Depth in front (−Z)">D</span>
+                                            <input type="number" id="spatial-distance" value="2" step="0.05" min="0">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label" title="Left / right">X</span>
+                                            <input type="number" id="spatial-side" value="0" step="0.05">
+                                        </div>
+                                        <div class="input-with-label">
+                                            <span class="input-label" title="Height from floor">H</span>
+                                            <input type="number" id="spatial-height" value="1.2" step="0.05">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="property-group">
+                                    <label>Facing (deg)</label>
+                                    <div class="property-row">
+                                        <div class="input-with-label" style="flex: 1;">
+                                            <span class="input-label">Y</span>
+                                            <input type="number" id="spatial-facing" value="0" step="1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <details class="property-advanced" id="world-transform-panel">
+                                    <summary>World position &amp; rotation</summary>
+                                    <div class="property-group" style="margin-top: 8px;">
+                                        <label>Position (meters)</label>
+                                        <div class="property-row">
+                                            <div class="input-with-label">
+                                                <span class="input-label">X</span>
+                                                <input type="number" id="prop-pos-x" value="0" step="0.05">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Y</span>
+                                                <input type="number" id="prop-pos-y" value="0" step="0.05">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Z</span>
+                                                <input type="number" id="prop-pos-z" value="0" step="0.05">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="property-group">
+                                        <label>Rotation (degrees)</label>
+                                        <div class="property-row">
+                                            <div class="input-with-label">
+                                                <span class="input-label">X</span>
+                                                <input type="number" id="prop-rot-x" value="0" step="1">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Y</span>
+                                                <input type="number" id="prop-rot-y" value="0" step="1">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Z</span>
+                                                <input type="number" id="prop-rot-z" value="0" step="1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="property-group">
+                                        <label>Scale</label>
+                                        <div class="property-row">
+                                            <div class="input-with-label">
+                                                <span class="input-label">X</span>
+                                                <input type="number" id="prop-scale-x" value="1" step="0.05">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Y</span>
+                                                <input type="number" id="prop-scale-y" value="1" step="0.05">
+                                            </div>
+                                            <div class="input-with-label">
+                                                <span class="input-label">Z</span>
+                                                <input type="number" id="prop-scale-z" value="1" step="0.05">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+
+                        <div class="property-section" id="frame-dim-section" style="display: none;">
+                            <div class="property-section-header">
+                                <span>Frame</span>
                                 <button class="collapse-btn">−</button>
                             </div>
                             <div class="property-section-content">
                                 <div class="property-group">
-                                    <label>Position (meters)</label>
+                                    <label for="frame-name-prop-input">Name</label>
+                                    <input type="text" id="frame-name-prop-input" class="text-prop-input" placeholder="Frame name">
+                                </div>
+                                <div class="property-group">
+                                    <label>Size (m)</label>
                                     <div class="property-row">
                                         <div class="input-with-label">
-                                            <span class="input-label">X</span>
-                                            <input type="number" value="0.0" step="0.1">
+                                            <span class="input-label">W</span>
+                                            <input type="number" id="frame-width-input" value="1.2" step="0.05" min="0.1">
                                         </div>
                                         <div class="input-with-label">
-                                            <span class="input-label">Y</span>
-                                            <input type="number" value="1.6" step="0.1">
-                                        </div>
-                                        <div class="input-with-label">
-                                            <span class="input-label">Z</span>
-                                            <input type="number" value="-2.5" step="0.1">
+                                            <span class="input-label">H</span>
+                                            <input type="number" id="frame-height-input" value="0.8" step="0.05" min="0.1">
                                         </div>
                                     </div>
                                 </div>
-
                                 <div class="property-group">
-                                    <label>Rotation (degrees)</label>
-                                    <div class="property-row">
-                                        <div class="input-with-label">
-                                            <span class="input-label">X</span>
-                                            <input type="number" value="0" step="1">
-                                        </div>
-                                        <div class="input-with-label">
-                                            <span class="input-label">Y</span>
-                                            <input type="number" value="45" step="1">
-                                        </div>
-                                        <div class="input-with-label">
-                                            <span class="input-label">Z</span>
-                                            <input type="number" value="0" step="1">
-                                        </div>
+                                    <label for="frame-anchor-type">Anchor To</label>
+                                    <select id="frame-anchor-type" class="select-input" title="ShapesXR-style: frame follows simulated head/hands (parented to active camera)">
+                                        <option value="world">World (default)</option>
+                                        <option value="head">Head</option>
+                                        <option value="rightHand">Right Hand</option>
+                                        <option value="leftHand">Left Hand</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="property-section" id="text-content-section" style="display: none;">
+                            <div class="property-section-header">
+                                <span>Text</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <div class="property-group" id="void-text-content-group">
+                                    <label for="void-text-content-input">Content</label>
+                                    <input type="text" id="void-text-content-input" class="text-prop-input" placeholder="Text">
+                                </div>
+                                <div class="property-group" id="void-button-label-group">
+                                    <label for="void-button-label-input">Label</label>
+                                    <input type="text" id="void-button-label-input" class="text-prop-input" placeholder="Button label">
+                                </div>
+                                <div class="property-group">
+                                    <label>Font size <span id="void-text-font-size-value">56</span>px</label>
+                                    <div class="slider-wrapper">
+                                        <input type="range" id="void-text-font-size" min="24" max="96" value="56" class="slider">
                                     </div>
                                 </div>
-
                                 <div class="property-group">
-                                    <label>Scale</label>
-                                    <div class="property-row">
-                                        <div class="input-with-label">
-                                            <span class="input-label">X</span>
-                                            <input type="number" value="1.0" step="0.1">
-                                        </div>
-                                        <div class="input-with-label">
-                                            <span class="input-label">Y</span>
-                                            <input type="number" value="1.0" step="0.1">
-                                        </div>
-                                        <div class="input-with-label">
-                                            <span class="input-label">Z</span>
-                                            <input type="number" value="1.0" step="0.1">
-                                        </div>
+                                    <label for="void-text-color-input">Text color</label>
+                                    <div class="color-picker-wrapper">
+                                        <input type="color" id="void-text-color-input" value="#ffffff" class="color-input">
                                     </div>
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" checked>
-                                        <span>Lock Proportions</span>
-                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="property-section" id="interaction-section" style="display: none;">
+                            <div class="property-section-header">
+                                <span>Interaction</span>
+                                <button class="collapse-btn">−</button>
+                            </div>
+                            <div class="property-section-content">
+                                <div class="property-group" id="button-link-group">
+                                    <label for="button-onclick-screen">On Click → Go to Screen</label>
+                                    <select id="button-onclick-screen" class="select-input">
+                                        <option value="">(None)</option>
+                                    </select>
+                                </div>
+                                <div class="property-group" id="button-animation-group">
+                                    <label for="button-click-animation">Animation on Click</label>
+                                    <select id="button-click-animation" class="select-input" title="Plays on the destination screen when this button is activated in Prototype or Camera Preview">
+                                        <option value="none">None</option>
+                                        <option value="fadeIn">Fade In</option>
+                                        <option value="scaleUp">Scale Up</option>
+                                        <option value="bounce">Bounce</option>
+                                        <option value="slideIn">Slide In</option>
+                                    </select>
                                 </div>
                             </div>
                         </div>
@@ -534,6 +693,37 @@
                     <span>100%</span>
                     <button class="icon-button">+</button>
                 </div>
+            </div>
+        </div>
+    </div>
+    </div><!-- /#phase-editor -->
+
+    <!-- Live camera under Three.js canvas; same renderer + controls for editing -->
+    <div id="spatial-preview-overlay" class="spatial-preview-overlay" aria-hidden="true">
+        <video id="spatial-preview-video" class="spatial-preview-video" playsinline muted autoplay></video>
+        <div id="spatial-preview-canvas-host" class="spatial-preview-canvas-host" style="touch-action: none;"></div>
+        <div class="spatial-preview-chrome">
+            <button type="button" class="btn-secondary" id="spatial-preview-close">Close Preview</button>
+            <p id="spatial-preview-hint" class="spatial-preview-hint"></p>
+        </div>
+    </div>
+
+    <div id="frame-preset-modal" class="frame-preset-modal" style="display: none;" aria-hidden="true">
+        <div class="frame-preset-panel">
+            <h3 class="frame-preset-title">New frame</h3>
+            <label class="frame-preset-label" for="frame-preset-select">Preset</label>
+            <select id="frame-preset-select" class="select-input frame-preset-select">
+                <option value="quest-panel">Quest 3 Panel (1.2 × 0.8)</option>
+                <option value="quest-wide">Quest 3 Wide (1.8 × 0.8)</option>
+                <option value="avp">Vision Pro Window (1.6 × 1.0)</option>
+                <option value="hud">HUD Overlay (2.0 × 0.4)</option>
+                <option value="custom">Custom (last size)</option>
+            </select>
+            <label class="frame-preset-label" for="frame-name-input">Name</label>
+            <input type="text" id="frame-name-input" class="text-prop-input" placeholder="Frame name">
+            <div class="frame-preset-actions">
+                <button type="button" class="btn-secondary" id="frame-preset-cancel">Cancel</button>
+                <button type="button" class="btn-primary" id="frame-preset-confirm">Create</button>
             </div>
         </div>
     </div>
