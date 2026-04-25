@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -441,6 +442,7 @@ function initialize3DViewport() {
             if (isChildOfFrame(state.selectedObject)) clampObjectToParentFrame(state.selectedObject);
             updatePropertiesFromObject(state.selectedObject);
         }
+        scheduleRemoteProjectSave();
     });
     state.scene.add(state.transformControls);
 
@@ -2475,6 +2477,323 @@ function downloadVoidJson() {
     showNotification('Saved scene.void.json');
 }
 
+function safeSetExportedUuid(obj, id) {
+    if (
+        typeof id === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ) {
+        obj.uuid = id;
+    }
+}
+
+function bumpNextScreenIndexFromImport(screenId) {
+    const m = /^screen-(\d+)$/.exec(screenId || '');
+    if (m) {
+        const n = parseInt(m[1], 10);
+        if (n >= state.nextScreenIndex) state.nextScreenIndex = n + 1;
+    }
+}
+
+function clearProjectForVoidImport() {
+    deselectObject();
+    const objs = [...state.objects];
+    objs.forEach((obj) => {
+        disposeObject3D(obj);
+        if (obj.parent) obj.parent.remove(obj);
+        else if (state.scene) state.scene.remove(obj);
+    });
+    state.objects = [];
+    state.selectableObjects = [];
+
+    state.screens.forEach((s) => {
+        if (s.group.parent) s.group.parent.remove(s.group);
+        disposeObject3D(s.group);
+    });
+    state.screens = [];
+    state.activeScreenId = null;
+    state.nextScreenIndex = 1;
+}
+
+function createScreenWithImportedId(screenId, name) {
+    const group = new THREE.Group();
+    group.name = `Screen: ${name}`;
+    group.userData.isScreenRoot = true;
+    group.userData.screenId = screenId;
+    state.scene.add(group);
+    state.screens.push({ id: screenId, name, group });
+    bumpNextScreenIndexFromImport(screenId);
+    return group;
+}
+
+function registerImportedRootObject(root) {
+    state.objects.push(root);
+    state.selectableObjects.push(root);
+}
+
+function applyVoidTransform(o, data) {
+    if (data.position) o.position.set(data.position.x, data.position.y, data.position.z);
+    if (data.rotation) o.rotation.set(data.rotation.x, data.rotation.y, data.rotation.z);
+    if (data.scale) o.scale.set(data.scale.x, data.scale.y, data.scale.z);
+}
+
+function buildImportedPrimitive(data) {
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, 0.5, 0.5),
+        new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.4, roughness: 0.6 })
+    );
+    mesh.name = data.name || 'Cube';
+    safeSetExportedUuid(mesh, data.id);
+    mesh.userData.selectable = true;
+    mesh.userData.voidType = 'primitive';
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    applyVoidTransform(mesh, data);
+    return mesh;
+}
+
+function buildImportedButton(data) {
+    const label = data.label || 'Button';
+    const group = new THREE.Group();
+    group.name = data.name || 'Button';
+    safeSetExportedUuid(group, data.id);
+    group.userData.voidType = 'button';
+    group.userData.label = label;
+    group.userData.onClickScreenId = data.onClickScreenId || '';
+    group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.selectable = true;
+    group.userData.textFontSize = 56;
+    group.userData.textColor = '#ffffff';
+
+    const w = 0.72;
+    const h = 0.22;
+    group.userData.planarBaseHalf = { x: w / 2, y: h / 2 };
+    const d = 0.03;
+    const bg = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ color: 0x4f46e5, metalness: 0.25, roughness: 0.55 })
+    );
+    group.add(bg);
+
+    const tex = makeTextTexture(label, 512, 128, group.userData.textColor, 'rgba(0,0,0,0)', group.userData.textFontSize);
+    const fg = new THREE.Mesh(
+        new THREE.PlaneGeometry(w * 0.92, h * 0.72),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true })
+    );
+    fg.position.z = d / 2 + 0.002;
+    group.add(fg);
+
+    applyVoidTransform(group, data);
+    return group;
+}
+
+function buildImportedPanel(data) {
+    const group = new THREE.Group();
+    group.name = data.name || 'Panel';
+    safeSetExportedUuid(group, data.id);
+    group.userData.voidType = 'panel';
+    group.userData.selectable = true;
+    group.userData.planarBaseHalf = { x: 0.6, y: 0.4 };
+
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.8, 0.04),
+        new THREE.MeshStandardMaterial({
+            color: 0x1e293b,
+            metalness: 0.15,
+            roughness: 0.85,
+            transparent: true,
+            opacity: 0.92
+        })
+    );
+    group.add(mesh);
+    applyVoidTransform(group, data);
+    return group;
+}
+
+function buildImportedText(data) {
+    const text = data.text || 'Label';
+    const group = new THREE.Group();
+    group.name = data.name || 'Text';
+    safeSetExportedUuid(group, data.id);
+    group.userData.voidType = 'text';
+    group.userData.text = text;
+    group.userData.selectable = true;
+    group.userData.textFontSize = 56;
+    group.userData.textColor = '#e2e8f0';
+    group.userData.textBg = 'rgba(15,23,42,0.35)';
+    group.userData.planarBaseHalf = { x: 0.5, y: 0.125 };
+
+    const tex = makeTextTexture(text, 1024, 256, group.userData.textColor, group.userData.textBg, group.userData.textFontSize);
+    const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 0.25),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true })
+    );
+    group.add(plane);
+    applyVoidTransform(group, data);
+    return group;
+}
+
+function buildImportedImage(data) {
+    const group = new THREE.Group();
+    group.name = data.name || 'Image';
+    safeSetExportedUuid(group, data.id);
+    group.userData.voidType = 'image';
+    group.userData.selectable = true;
+
+    const w = 0.9;
+    const h = 0.55;
+    group.userData.planarBaseHalf = { x: w / 2, y: h / 2 };
+    const frame = new THREE.Mesh(
+        new THREE.PlaneGeometry(w, h),
+        new THREE.MeshStandardMaterial({
+            color: 0x334155,
+            metalness: 0.1,
+            roughness: 0.9,
+            transparent: true,
+            opacity: 0.85
+        })
+    );
+    group.add(frame);
+
+    const edges = new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h));
+    const lines = new THREE.LineSegments(
+        edges,
+        new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.9 })
+    );
+    lines.position.z = 0.002;
+    group.add(lines);
+
+    applyVoidTransform(group, data);
+    return group;
+}
+
+function buildImportedFrame(data, screenIdForScope) {
+    const width = data.frameWidth != null ? data.frameWidth : 1.2;
+    const height = data.frameHeight != null ? data.frameHeight : 0.8;
+    const label = data.frameLabel || data.name || 'Frame';
+
+    const group = new THREE.Group();
+    group.name = data.name || label;
+    safeSetExportedUuid(group, data.id);
+    group.userData.voidType = 'frame';
+    group.userData.selectable = true;
+    group.userData.frameWidth = width;
+    group.userData.frameHeight = height;
+    group.userData.frameLabel = label;
+    group.userData.anchor = data.anchor || 'world';
+
+    const fillMat = new THREE.MeshStandardMaterial({
+        color: 0x0f172a,
+        transparent: true,
+        opacity: 0.45,
+        metalness: 0,
+        roughness: 1,
+        side: THREE.DoubleSide
+    });
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, height), fillMat);
+    group.add(fill);
+    group.userData.frameFill = fill;
+
+    const edgeGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, height));
+    const border = new THREE.LineSegments(
+        edgeGeo,
+        new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.95 })
+    );
+    border.position.z = 0.002;
+    group.add(border);
+    group.userData.frameBorder = border;
+
+    const labelTex = makeTextTexture(label, 512, 96, '#94a3b8', 'rgba(0,0,0,0)', 36);
+    const labelPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(Math.min(width * 0.95, 1.4), 0.12),
+        new THREE.MeshBasicMaterial({ map: labelTex, transparent: true })
+    );
+    labelPlane.position.set(0, height / 2 + 0.08, 0.004);
+    group.add(labelPlane);
+    group.userData.frameLabelMesh = labelPlane;
+    group.userData.frameLabelTexture = labelTex;
+
+    applyVoidTransform(group, data);
+
+    const children = Array.isArray(data.children) ? data.children : [];
+    children.forEach((ch) => {
+        const built = buildVoidObjectTreeFromData(ch, screenIdForScope);
+        built.userData.screenId = screenIdForScope;
+        group.add(built);
+        registerImportedRootObject(built);
+    });
+
+    group.userData.screenId = screenIdForScope;
+    return group;
+}
+
+function buildVoidObjectTreeFromData(data, screenIdForScope) {
+    const t = data.type;
+    if (t === 'button') return buildImportedButton(data);
+    if (t === 'panel') return buildImportedPanel(data);
+    if (t === 'text') return buildImportedText(data);
+    if (t === 'image') return buildImportedImage(data);
+    if (t === 'frame') return buildImportedFrame(data, screenIdForScope);
+    if (t === 'primitive') return buildImportedPrimitive(data);
+    return buildImportedPrimitive(data);
+}
+
+function applyVoidImport(exportObj) {
+    if (!state.scene) {
+        showNotification('Open the editor before loading cloud data.');
+        return false;
+    }
+    if (!exportObj || exportObj.void !== true || !Array.isArray(exportObj.screens)) {
+        showNotification('Invalid Void export payload.');
+        return false;
+    }
+
+    window.__voidImportInFlight = true;
+    try {
+        clearProjectForVoidImport();
+
+        exportObj.screens.forEach((sc, idx) => {
+            createScreenWithImportedId(sc.id, sc.name || `Screen ${idx + 1}`);
+        });
+
+        exportObj.screens.forEach((sc) => {
+            const screenRec = state.screens.find((s) => s.id === sc.id);
+            if (!screenRec) return;
+            const components = Array.isArray(sc.components) ? sc.components : [];
+            components.forEach((comp) => {
+                const obj = buildVoidObjectTreeFromData(comp, sc.id);
+                obj.userData.screenId = sc.id;
+                screenRec.group.add(obj);
+                registerImportedRootObject(obj);
+            });
+        });
+
+        const active =
+            exportObj.activeScreenId && state.screens.some((s) => s.id === exportObj.activeScreenId)
+                ? exportObj.activeScreenId
+                : state.screens[0]?.id;
+        if (active) switchToScreen(active, { silent: true });
+
+        exportObj.screens.forEach((sc) => {
+            const screenRec = state.screens.find((s) => s.id === sc.id);
+            if (!screenRec) return;
+            screenRec.group.children.forEach((root) => {
+                if (root.userData?.voidType === 'frame' && root.userData.anchor && root.userData.anchor !== 'world') {
+                    applyFrameXRAnchorType(root, root.userData.anchor);
+                }
+            });
+        });
+
+        refreshScreensPanel();
+        refreshLayersPanel();
+        populateButtonLinkDropdown();
+        updatePrototypeLinkLines();
+        showNotification('Loaded saved Void project');
+        return true;
+    } finally {
+        window.__voidImportInFlight = false;
+    }
+}
+
 function initializeMenuSave() {
     const saveBtn = document.getElementById('menu-save-void');
     if (saveBtn) {
@@ -2851,6 +3170,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3D viewport + scene: deferred until setAppPhase('editor') — see ensureEditorExperienceInitialized().
 
     console.log('Initial state:', state);
+
+    initVoidRemoteSync();
 });
 
 // ===== EXPORT FOR DEBUGGING =====
@@ -2869,6 +3190,8 @@ window.XRSpatialUI = {
     deleteSelectedObject,
     downloadVoidJson,
     buildVoidExport,
+    applyVoidImport,
+    applyViewportZoomToCameras,
     createScreen,
     switchToScreen,
     setAppPhase,
