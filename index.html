@@ -8,7 +8,8 @@
     <link rel="stylesheet" href="styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
 
 <body>
@@ -16,7 +17,10 @@
     <nav id="app-top-nav" class="app-top-nav" hidden aria-label="App navigation">
         <div class="app-top-nav-inner">
             <span class="app-top-nav-brand" aria-hidden="true">Void</span>
-            <button type="button" class="app-top-nav-link" id="app-nav-dashboard">Dashboard</button>
+            <div class="app-top-nav-actions">
+                <button type="button" class="icon-button theme-toggle-btn" data-theme-toggle aria-label="Switch to light theme" title="Switch theme">🌙</button>
+                <button type="button" class="app-top-nav-link" id="app-nav-dashboard">Dashboard</button>
+            </div>
         </div>
     </nav>
 
@@ -90,17 +94,13 @@
                 <div class="menu-item">Help</div>
             </nav>
             <div class="menu-actions">
+                <button type="button" class="icon-button theme-toggle-btn" data-theme-toggle aria-label="Switch to light theme" title="Switch theme">🌙</button>
                 <!-- Prominent Design ↔ Prototype (Play) toggle — same bar as Spatial Preview & device preview -->
                 <div class="editor-mode-toggle editor-mode-toggle--prominent" role="group" aria-label="Design Mode or Prototype Mode">
                     <button type="button" class="mode-pill active" id="btn-mode-design" aria-pressed="true" title="Edit layout, layers, and properties">Design Mode</button>
                     <button type="button" class="mode-pill" id="btn-mode-prototype" aria-pressed="false" title="Play prototype — buttons jump to linked screens">Prototype Mode</button>
                 </div>
-                <button type="button" class="icon-button" id="btn-spatial-preview" title="Preview in Space — AR over device camera">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-                        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                        <circle cx="12" cy="13" r="4"/>
-                    </svg>
-                </button>
+                <button type="button" class="icon-button" id="btn-spatial-preview" title="Preview in Space — AR over device camera"><i data-lucide="camera"></i></button>
                 <button class="icon-button" title="Share">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                         <path
@@ -118,35 +118,25 @@
             <!-- Left Sidebar -->
             <div class="sidebar sidebar-left">
                 <div class="sidebar-tabs">
-                    <button class="sidebar-tab active" data-tab="layers">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <rect x="2" y="2" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
-                            <rect x="9" y="2" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
-                            <rect x="2" y="9" width="5" height="5" stroke="currentColor" stroke-width="1.5" />
-                        </svg>
-                        Layers
+                <button class="sidebar-tab active" data-tab="layers" title="Layers">
+                        <i data-lucide="layers"></i>
+                        <span class="tab-label">Layers</span>
                     </button>
-                    <button class="sidebar-tab" data-tab="assets">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5" />
-                            <circle cx="6" cy="6" r="1.5" fill="currentColor" />
-                            <path d="M2 12l4-4 2 2 4-4 2 2v4H2z" fill="currentColor" opacity="0.5" />
-                        </svg>
-                        Assets
+                    <button class="sidebar-tab" data-tab="assets" title="Assets">
+                        <i data-lucide="component"></i>
+                        <span class="tab-label">Assets</span>
                     </button>
-                    <button class="sidebar-tab" data-tab="colors">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5" />
-                            <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" />
-                        </svg>
-                        Colors
+                    <button class="sidebar-tab" data-tab="colors" title="Colors">
+                        <i data-lucide="palette"></i>
+                        <span class="tab-label">Colors</span>
                     </button>
-                    <button class="sidebar-tab" data-tab="screens">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"
-                                stroke="currentColor" stroke-width="1.5" />
-                        </svg>
-                        Screens
+                    <button class="sidebar-tab" data-tab="screens" title="Screens">
+                        <i data-lucide="monitor"></i>
+                        <span class="tab-label">Screens</span>
+                    </button>
+                    <button class="sidebar-tab" data-tab="environments" title="Environments">
+                        <i data-lucide="image"></i>
+                        <span class="tab-label">Environments</span>
                     </button>
                 </div>
 
@@ -230,6 +220,17 @@
                         <p class="tab-hint" style="font-size: 12px; color: var(--color-text-muted); margin: 0 0 8px 0;">Each screen is its own layout. Switch screens to edit them.</p>
                         <div class="pages-list" id="screens-list"></div>
                     </div>
+
+                    <!-- Environments Tab Content -->
+                    <div class="tab-content" id="environments-tab">
+                        <div class="tab-header">
+                            <h3>Environment Presets</h3>
+                        </div>
+                        <p class="tab-hint" style="font-size: 12px; color: var(--color-text-muted); margin: 0 0 10px 0;">Optional context preview. Your UI remains fully editable.</p>
+                        <div class="environment-loading-indicator" id="environment-loading-indicator" style="display:none;">Loading environment...</div>
+                        <div class="environments-list" id="environments-list"></div>
+                        <button type="button" class="btn-secondary environments-clear-btn" id="btn-clear-environment">Clear Environment</button>
+                    </div>
                 </div>
             </div>
 
@@ -248,19 +249,18 @@
                         </select>
                     </div>
                     <div class="viewport-controls">
-                        <button type="button" class="icon-button" data-view-preset="top" title="Top View">⬆️</button>
-                        <button type="button" class="icon-button" data-view-preset="front" title="Front View">➡️</button>
-                        <button type="button" class="icon-button" data-view-preset="side" title="Side View">↗️</button>
-                        <button type="button" class="icon-button active" data-view-preset="isometric" title="Isometric">🔲</button>
+                        <button type="button" class="icon-button" data-view-preset="top" title="Top View"><i data-lucide="arrow-up"></i></button>
+                        <button type="button" class="icon-button" data-view-preset="front" title="Front View"><i data-lucide="arrow-right"></i></button>
+                        <button type="button" class="icon-button" data-view-preset="side" title="Side View"><i data-lucide="arrow-up-right"></i></button>
+                        <button type="button" class="icon-button active" data-view-preset="isometric" title="Isometric"><i data-lucide="box"></i></button>
                         <div class="control-divider"></div>
-                        <button type="button" class="icon-button" id="btn-view-mode-toggle" title="2D: orthographic canvas — drag & corner-resize like Figma (no gizmo). 3D: full gizmos.">2D</button>
+                        <button type="button" class="icon-button" id="btn-view-mode-toggle" title="Toggle 2D/3D view"><i data-lucide="layout-dashboard"></i></button>
                         <div class="control-divider"></div>
-                        <button type="button" class="icon-button" id="viewport-toggle-grid" title="Toggle Grid">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                <path d="M2 2v12h12M2 6h12M2 10h12M6 2v12M10 2v12" stroke="currentColor"
-                                    stroke-width="1.5" />
-                            </svg>
-                        </button>
+                        <button type="button" class="icon-button active" id="viewport-toggle-grid" title="Toggle Floor/Grid" aria-pressed="true"><i data-lucide="grid-3x3"></i></button>
+                        <label class="canvas-color-control" title="Canvas color">
+                            <input type="color" id="canvas-color-picker" value="#0d0d0d">
+                        </label>
+                        <button type="button" class="icon-button" id="canvas-color-reset" title="Reset canvas color"><i data-lucide="rotate-ccw"></i></button>
                         <button type="button" class="icon-button" id="viewport-toggle-safe" title="Toggle Safe Zone">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                                 <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"
@@ -482,22 +482,54 @@
                                 <span>Interaction</span>
                                 <button class="collapse-btn">−</button>
                             </div>
-                            <div class="property-section-content">
+                            <div class="property-section-content" id="interaction-section-inner">
+                                <p class="interaction-hint" id="interaction-hint" style="font-size: 11px; color: var(--color-text-muted); margin: 0 0 8px 0; line-height: 1.4;">
+                                    Switch to Prototype mode and drag from the <strong>→</strong> handle on the canvas to connect.
+                                </p>
+                                <div class="interaction-fields" id="interaction-fields">
                                 <div class="property-group" id="button-link-group">
                                     <label for="button-onclick-screen">On Click → Go to Screen</label>
                                     <select id="button-onclick-screen" class="select-input">
                                         <option value="">(None)</option>
                                     </select>
                                 </div>
-                                <div class="property-group" id="button-animation-group">
-                                    <label for="button-click-animation">Animation on Click</label>
-                                    <select id="button-click-animation" class="select-input" title="Plays on the destination screen when this button is activated in Prototype or Camera Preview">
+                                <div class="property-group">
+                                    <label for="proto-transition-type">Animation type</label>
+                                    <select id="proto-transition-type" class="select-input">
+                                        <option value="instant">Instant</option>
+                                        <option value="fade">Fade</option>
+                                        <option value="slideLeft">Slide Left</option>
+                                        <option value="slideRight">Slide Right</option>
+                                        <option value="scaleUp">Scale Up</option>
+                                        <option value="scaleDown">Scale Down</option>
+                                    </select>
+                                </div>
+                                <div class="property-group">
+                                    <label for="proto-transition-duration">Duration (ms)</label>
+                                    <input type="number" id="proto-transition-duration" class="text-prop-input" min="0" max="10000" step="50" value="300">
+                                </div>
+                                <div class="property-group">
+                                    <label for="proto-transition-easing">Easing</label>
+                                    <select id="proto-transition-easing" class="select-input">
+                                        <option value="ease-in-out">Ease In Out</option>
+                                        <option value="ease-in">Ease In</option>
+                                        <option value="ease-out">Ease Out</option>
+                                        <option value="linear">Linear</option>
+                                    </select>
+                                </div>
+                                <div class="property-group" id="interaction-legacy-anim" style="display: none;" aria-hidden="true">
+                                    <label for="button-click-animation">Legacy: Animation on Click</label>
+                                    <select id="button-click-animation" class="select-input" title="Superseded by Animation type; kept for older files">
                                         <option value="none">None</option>
                                         <option value="fadeIn">Fade In</option>
                                         <option value="scaleUp">Scale Up</option>
                                         <option value="bounce">Bounce</option>
                                         <option value="slideIn">Slide In</option>
                                     </select>
+                                </div>
+                                <div class="property-group">
+                                    <button type="button" class="btn-remove-proto-link" id="btn-remove-proto-link">Remove connection</button>
+                                </div>
                                 </div>
                             </div>
                         </div>
@@ -638,32 +670,15 @@
         <!-- Bottom Toolbar -->
         <div class="toolbar">
             <div class="toolbar-tools">
-                <button class="tool-button active" title="Select (V)" data-tool="select">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M3 3l7 14 2-6 6-2L3 3z" stroke="currentColor" stroke-width="1.5" fill="none" />
-                    </svg>
-                </button>
-                <button class="tool-button" title="Frame (F)" data-tool="frame">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <rect x="4" y="4" width="12" height="12" stroke="currentColor" stroke-width="1.5" fill="none" />
-                    </svg>
-                </button>
-                <button class="tool-button" title="Text (T)" data-tool="text">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M5 4h10M10 4v12M7 16h6" stroke="currentColor" stroke-width="1.5" />
-                    </svg>
-                </button>
+                <button class="tool-button active" title="Select (V)" data-tool="select"><i data-lucide="mouse-pointer-2"></i></button>
+                <button class="tool-button" title="Frame (F)" data-tool="frame"><i data-lucide="square"></i></button>
+                <button class="tool-button" title="Text (T)" data-tool="text"><i data-lucide="type"></i></button>
                 <button class="tool-button" title="Shape (R)" data-tool="shape">
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                         <circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" fill="none" />
                     </svg>
                 </button>
-                <button class="tool-button" title="3D Box (B)" data-tool="box">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M10 3L4 6v8l6 3 6-3V6l-6-3z" stroke="currentColor" stroke-width="1.5" fill="none" />
-                        <path d="M4 6l6 3m0 0l6-3m-6 3v8" stroke="currentColor" stroke-width="1.5" />
-                    </svg>
-                </button>
+                <button class="tool-button" title="3D Box (B)" data-tool="box"><i data-lucide="box"></i></button>
                 <button class="tool-button" title="Image (I)" data-tool="image">
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                         <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"
@@ -705,6 +720,19 @@
         <div class="spatial-preview-chrome">
             <button type="button" class="btn-secondary" id="spatial-preview-close">Close Preview</button>
             <p id="spatial-preview-hint" class="spatial-preview-hint"></p>
+        </div>
+    </div>
+
+    <div id="proto-link-dest-modal" class="frame-preset-modal" style="display: none;" aria-hidden="true">
+        <div class="frame-preset-panel">
+            <h3 class="frame-preset-title">Link destination</h3>
+            <p class="form-hint" style="font-size: 12px; color: var(--color-text-muted); margin: 0 0 8px 0;">Choose which screen this interaction opens.</p>
+            <label class="frame-preset-label" for="proto-dest-screen-select">Screen</label>
+            <select id="proto-dest-screen-select" class="select-input frame-preset-select"></select>
+            <div class="frame-preset-actions" style="margin-top: 12px;">
+                <button type="button" class="btn-secondary" id="proto-link-dest-cancel">Cancel</button>
+                <button type="button" class="btn-primary" id="proto-link-dest-confirm">Link</button>
+            </div>
         </div>
     </div>
 

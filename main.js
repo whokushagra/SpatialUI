@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 
 // ===== APPLICATION STATE =====
@@ -44,11 +46,22 @@ const state = {
     /** Saved when opening spatial preview (scene.background is set null for transparency) */
     savedSceneBackground: null,
     spatialPreviewActive: false,
+    /** 'camera' | 'xr' | null */
+    spatialPreviewKind: null,
     spatialPreviewStream: null,
     /** True while “Preview in Space” is open — editor environment (floor, grids) is hidden */
     spatialPreviewMode: false,
     /** Saved .visible flags for environment objects; restored when preview closes */
     spatialPreviewEnvironmentBackup: null,
+    /** WebXR runtime data for anchored AR preview */
+    spatialXR: null,
+    /** Optional environment preset data for design-time contextual preview */
+    activeEnvironmentPresetId: null,
+    environmentTexture: null,
+    environmentLoading: false,
+    defaultEditorBackground: null,
+    environmentLoadRequestId: 0,
+    floorVisible: true,
     /**
      * Figma-style canvas drag (2D ortho + Spatial Preview): move / corner-resize without TransformControls gizmo.
      * @type {null | object}
@@ -68,8 +81,81 @@ const state = {
      * Scene / WebGL init deferred until first entry to `editor` so canvas stays hidden on prior steps.
      */
     appPhase: 'login',
-    editorExperienceInitialized: false
+    editorExperienceInitialized: false,
+    /** Figma-style prototype drag + HTML overlay (Prototype mode) */
+    prototypeLinkDrag: null,
+    prototypeHoverRoot: null,
+    /** @type {null | { t0: number, duration: number, easing: string, type: string, toGroup: THREE.Object3D, fromGroup: THREE.Object3D | null, fromPos0: THREE.Vector3, toPos0: THREE.Vector3, dFrom: THREE.Vector3, dTo: THREE.Vector3, data: object, targetId: string, phase: 'dual' | 'toOnly' } } */
+    prototypeScreenNavJob: null,
+    _protoNavTmpVec: new THREE.Vector3(),
+    /** @type {null | { wrap: HTMLElement, canvas: HTMLCanvasElement, handle: HTMLButtonElement, ctx: CanvasRenderingContext2D, deletes: HTMLElement, dpr: number }} */
+    prototypeLinkUI: null
 };
+
+/** Frames, UI components that can have prototype navigation + links */
+const INTERACTION_VOID_TYPES = new Set(['frame', 'button', 'text', 'image', 'panel']);
+const _protoEdgeLocal = new THREE.Vector3();
+const _protoProj = new THREE.Vector3();
+
+const THEME_STORAGE_KEY = 'void-theme';
+
+function applyTheme(theme) {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {}
+
+    const toggles = document.querySelectorAll('[data-theme-toggle]');
+    const isLight = next === 'light';
+    toggles.forEach((btn) => {
+        btn.textContent = isLight ? '☀️' : '🌙';
+        btn.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+        btn.setAttribute('title', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+    });
+}
+
+function initializeThemeToggle() {
+    let preferred = 'dark';
+    try {
+        preferred =
+            localStorage.getItem(THEME_STORAGE_KEY) ||
+            (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    } catch {}
+    applyTheme(preferred);
+
+    document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+            applyTheme(current === 'light' ? 'dark' : 'light');
+        });
+    });
+}
+
+function initializeLucideIcons() {
+    if (!window.lucide?.createIcons) return;
+    window.lucide.createIcons();
+}
+
+function initializePropertySectionIcons() {
+    const mapping = {
+        Spatial: 'move',
+        Frame: 'maximize-2',
+        Text: 'type',
+        Interaction: 'zap',
+        Appearance: 'droplet',
+        Lighting: 'settings'
+    };
+    document.querySelectorAll('.property-section-header span').forEach((el) => {
+        const key = Object.keys(mapping).find((k) => el.textContent.trim().startsWith(k));
+        if (!key || el.dataset.iconApplied === '1') return;
+        const icon = document.createElement('i');
+        icon.setAttribute('data-lucide', mapping[key]);
+        icon.className = 'property-header-icon';
+        el.prepend(icon);
+        el.dataset.iconApplied = '1';
+    });
+}
 
 // ===== SCREENS (each screen = THREE.Group in scene) =====
 function getActiveScreen() {
@@ -244,6 +330,45 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
+function isInteractionVoidType(t) {
+    return INTERACTION_VOID_TYPES.has(t);
+}
+
+function mapLegacyClickAnimationToTransition(clickAnimation) {
+    switch (clickAnimation) {
+        case 'fadeIn':
+            return 'fade';
+        case 'scaleUp':
+            return 'scaleUp';
+        case 'slideIn':
+            return 'slideLeft';
+        case 'bounce':
+            return 'scaleUp';
+        case 'none':
+        default:
+            return 'instant';
+    }
+}
+
+function ensureInteractionUserData(u) {
+    if (!u) return;
+    if (u.onClickScreenId === undefined) u.onClickScreenId = '';
+    if (!u.transitionType) u.transitionType = mapLegacyClickAnimationToTransition(u.clickAnimation);
+    if (u.transitionDuration == null || !Number.isFinite(Number(u.transitionDuration))) u.transitionDuration = 300;
+    if (!u.transitionEasing) u.transitionEasing = 'ease-in-out';
+    if (u.prototypeLinkTargetUuid === undefined) u.prototypeLinkTargetUuid = '';
+    if (u.clickAnimation === undefined) u.clickAnimation = 'none';
+}
+
+function applyProtoEasing(t, name) {
+    const k = THREE.MathUtils.clamp(t, 0, 1);
+    if (name === 'ease-in') return k * k;
+    if (name === 'ease-out') return 1 - (1 - k) * (1 - k);
+    if (name === 'linear') return k;
+    if (k < 0.5) return 2 * k * k;
+    return 1 - Math.pow(-2 * k + 2, 2) / 2;
+}
+
 function refreshLayersPanel() {
     const tree = document.getElementById('layers-tree');
     if (!tree) return;
@@ -293,7 +418,7 @@ function populateButtonLinkDropdown() {
     });
     const valid = current === '' || Array.from(sel.options).some((o) => o.value === current);
     sel.value = valid ? current : '';
-    if (!valid && current && state.selectedObject?.userData?.voidType === 'button') {
+    if (!valid && current && isInteractionVoidType(state.selectedObject?.userData?.voidType)) {
         state.selectedObject.userData.onClickScreenId = '';
     }
 }
@@ -303,21 +428,38 @@ function updateInteractionPanel(object) {
     const content = section?.querySelector('.property-section-content');
     const collapseBtn = section?.querySelector('.collapse-btn');
     const sel = document.getElementById('button-onclick-screen');
+    const fields = document.getElementById('interaction-fields');
+    const hint = document.getElementById('interaction-hint');
     if (!section) return;
 
-    const isButton = object?.userData?.voidType === 'button';
-    // Use block + ensure inner content is visible (collapse UI can leave display:none)
-    section.style.display = isButton ? 'block' : 'none';
-    if (isButton && content) {
+    const u = object?.userData;
+    const show = object && isInteractionVoidType(u?.voidType);
+    section.style.display = show ? 'block' : 'none';
+    if (show && content) {
         content.style.display = 'block';
         if (collapseBtn) collapseBtn.textContent = '−';
     }
 
-    if (!isButton || !sel) return;
+    if (!show || !sel) return;
+    ensureInteractionUserData(u);
     populateButtonLinkDropdown();
-    sel.value = object.userData.onClickScreenId || '';
-    const animSel = document.getElementById('button-click-animation');
-    if (animSel) animSel.value = object.userData.clickAnimation || 'none';
+    sel.value = u.onClickScreenId || '';
+
+    const dur = document.getElementById('proto-transition-duration');
+    const typ = document.getElementById('proto-transition-type');
+    const eas = document.getElementById('proto-transition-easing');
+    const leg = document.getElementById('button-click-animation');
+    const rem = document.getElementById('btn-remove-proto-link');
+
+    if (typ) typ.value = u.transitionType || 'instant';
+    if (dur) dur.value = String(u.transitionDuration ?? 300);
+    if (eas) eas.value = u.transitionEasing || 'ease-in-out';
+    if (leg) leg.value = u.clickAnimation || 'none';
+
+    const linked = !!(u.onClickScreenId && u.onClickScreenId.length);
+    if (fields) fields.classList.toggle('is-muted', !linked);
+    if (hint) hint.style.display = linked ? 'none' : 'block';
+    if (rem) rem.style.display = linked ? 'block' : 'none';
 }
 
 /** Orthographic frustum sized to viewport; zoom slider scales visible world height (Figma-like). */
@@ -373,6 +515,7 @@ function initialize3DViewport() {
     // Create Scene
     state.scene = new THREE.Scene();
     state.scene.background = new THREE.Color(0x0f0f0f);
+    state.defaultEditorBackground = state.scene.background;
 
     // Cameras: perspective (3D) + orthographic (flat 2D / Figma-like)
     const width = viewportElement.clientWidth;
@@ -390,6 +533,9 @@ function initialize3DViewport() {
     state.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     state.renderer.setSize(width, height);
     state.renderer.setPixelRatio(window.devicePixelRatio);
+    state.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    state.renderer.toneMappingExposure = 1.0;
+    state.renderer.outputColorSpace = THREE.SRGBColorSpace;
     state.renderer.setClearColor(0x000000, 1);
     viewportElement.appendChild(state.renderer.domElement);
 
@@ -472,6 +618,9 @@ function initialize3DViewport() {
 
     // Add Sample 3D Objects (into active screen group)
     addSampleObjects();
+    applyFloorVisibility();
+
+    initPrototypeLinkOverlay(viewportElement);
 
     // Add Axes Helper
     const axesHelper = new THREE.AxesHelper(2);
@@ -769,15 +918,16 @@ function endPlanarPointerDrag() {
 }
 
 /**
- * Prototype / Play Mode navigation from a button (single source of truth).
- * Called from 3D click raycast and from 2D/preview pointerup using the SAME button root captured on pointerdown
- * so we never re-raycast and miss the hit (fixes “click does nothing / falls through to wrong selection”).
+ * Prototype / Play Mode navigation (planar UI with interaction).
+ * Called from 3D click raycast and from 2D/preview pointerup with the same root as pointerdown.
  */
-function runPrototypeButtonNavigation(buttonRoot) {
-    if (!buttonRoot || buttonRoot.userData?.voidType !== 'button') return;
-    const linkId = buttonRoot.userData.onClickScreenId;
+function runPrototypeNavigation(root) {
+    if (!root || !isInteractionVoidType(root.userData?.voidType)) return;
+    const u = root.userData;
+    ensureInteractionUserData(u);
+    const linkId = u.onClickScreenId;
     if (!linkId) {
-        showNotification('Button has no linked screen — set “On Click → Go to Screen” in Properties');
+        showNotification('No linked screen — set “On Click → Go to Screen” or connect in Prototype mode');
         return;
     }
     const target = state.screens.find((s) => s.id === linkId);
@@ -785,9 +935,196 @@ function runPrototypeButtonNavigation(buttonRoot) {
         showNotification('Linked screen not found');
         return;
     }
-    switchToScreen(linkId, { silent: true });
-    showNotification(`Prototype → ${target.name}`);
-    playButtonClickAnimation(buttonRoot, target.group, buttonRoot.userData.clickAnimation || 'none');
+    const fromId = state.activeScreenId;
+    playPrototypeScreenTransition(root, fromId, target, u);
+}
+
+/** @deprecated use runPrototypeNavigation */
+function runPrototypeButtonNavigation(root) {
+    runPrototypeNavigation(root);
+}
+
+function setTwoScreensVisibleForNav(fromId, toId) {
+    const allow = new Set([fromId, toId]);
+    state.screens.forEach((s) => {
+        s.group.visible = allow.has(s.id);
+    });
+    state.objects.forEach((o) => {
+        if (o.userData?.voidType === 'frame' && o.userData?.anchor && o.userData.anchor !== 'world') {
+            o.visible = allow.has(o.userData.screenId);
+        }
+    });
+}
+
+function playPrototypeScreenTransition(_sourceRoot, fromId, targetRec, u) {
+    const toId = targetRec.id;
+    const name = targetRec.name;
+    state.activeClickAnimation = null;
+
+    const type = u.transitionType || 'instant';
+    const duration = Math.max(0, u.transitionDuration ?? 300);
+    const easing = u.transitionEasing || 'ease-in-out';
+    const legacy = u.clickAnimation || 'none';
+
+    if (type === 'instant') {
+        switchToScreen(toId, { silent: true });
+        showNotification(`Prototype → ${name}`);
+        if (legacy && legacy !== 'none') {
+            playButtonClickAnimation(_sourceRoot, targetRec.group, legacy);
+        }
+        return;
+    }
+
+    if (type === 'slideLeft' || type === 'slideRight') {
+        const fromRec = state.screens.find((s) => s.id === fromId);
+        if (!fromRec || fromId === toId) {
+            switchToScreen(toId, { silent: true });
+            showNotification(`Prototype → ${name}`);
+            return;
+        }
+        const W = 3.2;
+        const toG = targetRec.group;
+        const fromG = fromRec.group;
+        toG.updateMatrixWorld(true);
+        fromG.updateMatrixWorld(true);
+        const f0x = fromG.position.x;
+        const t0x = toG.position.x;
+        setTwoScreensVisibleForNav(fromId, toId);
+        state.prototypeScreenNavJob = {
+            kind: 'slide',
+            t0: performance.now(),
+            duration: Math.max(1, duration),
+            easing,
+            fromG,
+            toG,
+            fromId,
+            toId,
+            w: W,
+            mode: type === 'slideLeft' ? 'left' : 'right',
+            f0x,
+            t0x
+        };
+        if (type === 'slideLeft') {
+            toG.position.x = t0x + W;
+        } else {
+            toG.position.x = t0x - W;
+        }
+        fromG.position.x = f0x;
+        showNotification(`Prototype → ${name}`);
+        return;
+    }
+
+    switchToScreen(toId, { silent: true });
+    showNotification(`Prototype → ${name}`);
+
+    if (type === 'fade') {
+        const toG = targetRec.group;
+        const opac = [];
+        toG.traverse((ch) => {
+            if (ch.isMesh && ch.material) {
+                const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+                mats.forEach((m) => {
+                    m.transparent = true;
+                    const end = m.opacity !== undefined ? m.opacity : 1;
+                    opac.push({ mat: m, end: Math.min(1, end) });
+                    m.opacity = 0;
+                });
+            }
+        });
+        state.prototypeScreenNavJob = {
+            kind: 'fade',
+            t0: performance.now(),
+            duration: Math.max(1, duration),
+            easing,
+            toG: targetRec.group,
+            opac,
+            toId
+        };
+        return;
+    }
+
+    if (type === 'scaleUp' || type === 'scaleDown') {
+        const toG = targetRec.group;
+        const s0 = type === 'scaleUp' ? 0.95 : 1.05;
+        const data = { sx: toG.scale.x, sy: toG.scale.y, sz: toG.scale.z, s0 };
+        toG.scale.set(s0 * data.sx, s0 * data.sy, s0 * data.sz);
+        const opac = [];
+        toG.traverse((ch) => {
+            if (ch.isMesh && ch.material) {
+                const mats = Array.isArray(ch.material) ? ch.material : [ch.material];
+                mats.forEach((m) => {
+                    m.transparent = true;
+                    const end = m.opacity !== undefined ? m.opacity : 1;
+                    opac.push({ mat: m, end: Math.min(1, end) });
+                    m.opacity = 0;
+                });
+            }
+        });
+        state.prototypeScreenNavJob = {
+            kind: 'scale',
+            t0: performance.now(),
+            duration: Math.max(1, duration),
+            easing,
+            toG: targetRec.group,
+            toId,
+            data,
+            opac,
+            scaleMode: type
+        };
+    }
+}
+
+function updatePrototypeScreenNavJob() {
+    const job = state.prototypeScreenNavJob;
+    if (!job) return;
+    const now = performance.now();
+    const t = Math.min(1, (now - job.t0) / (job.duration || 300));
+    const k = applyProtoEasing(t, job.easing || 'ease-in-out');
+
+    if (job.kind === 'slide' && job.fromG && job.toG) {
+        const W = job.w;
+        if (job.mode === 'left') {
+            job.fromG.position.x = THREE.MathUtils.lerp(job.f0x, job.f0x - W, k);
+            job.toG.position.x = THREE.MathUtils.lerp(job.t0x + W, job.t0x, k);
+        } else {
+            job.fromG.position.x = THREE.MathUtils.lerp(job.f0x, job.f0x + W, k);
+            job.toG.position.x = THREE.MathUtils.lerp(job.t0x - W, job.t0x, k);
+        }
+    } else if (job.kind === 'fade' && job.opac) {
+        job.opac.forEach(({ mat, end }) => {
+            mat.opacity = THREE.MathUtils.lerp(0, end, k);
+        });
+    } else if (job.kind === 'scale' && job.toG && job.data) {
+        const { sx, sy, sz, s0 } = job.data;
+        const s = THREE.MathUtils.lerp(s0, 1, k);
+        job.toG.scale.set(s * sx, s * sy, s * sz);
+        if (job.opac) {
+            job.opac.forEach(({ mat, end }) => {
+                mat.opacity = THREE.MathUtils.lerp(0, end, k);
+            });
+        }
+    }
+
+    if (t >= 1) {
+        if (job.kind === 'slide' && job.toId) {
+            if (job.fromG) job.fromG.position.x = job.f0x;
+            if (job.toG) job.toG.position.x = job.t0x;
+            switchToScreen(job.toId, { silent: true });
+        } else if (job.kind === 'fade' && job.opac) {
+            job.opac.forEach(({ mat, end }) => {
+                mat.opacity = end;
+            });
+        } else if (job.kind === 'scale' && job.toG && job.data) {
+            const { sx, sy, sz } = job.data;
+            job.toG.scale.set(sx, sy, sz);
+            if (job.opac) {
+                job.opac.forEach(({ mat, end }) => {
+                    mat.opacity = end;
+                });
+            }
+        }
+        state.prototypeScreenNavJob = null;
+    }
 }
 
 function applyPlanarPickFromClient(clientX, clientY) {
@@ -800,8 +1137,8 @@ function applyPlanarPickFromClient(clientX, clientY) {
 
     if (state.editorMode === 'prototype' && intersects.length > 0) {
         const root = resolveSelectableRoot(intersects[0].object);
-        if (root?.userData?.voidType === 'button') {
-            runPrototypeButtonNavigation(root);
+        if (root && isInteractionVoidType(root.userData?.voidType)) {
+            runPrototypeNavigation(root);
             return;
         }
     }
@@ -842,10 +1179,10 @@ function onPlanarPointerDown(e) {
     const root = resolveSelectableRoot(intersects[0].object);
     if (!root || !PLANAR_UI_TYPES.has(root.userData.voidType)) return;
 
-    // Prototype: defer button activation to pointerup (tap vs drag to move).
-    if (state.editorMode === 'prototype' && root.userData.voidType === 'button') {
+    // Prototype: defer interaction tap to pointerup (tap vs drag to move).
+    if (state.editorMode === 'prototype' && isInteractionVoidType(root.userData.voidType)) {
         state.planarPointerDrag = {
-            kind: 'prototypeButton',
+            kind: 'prototypeTap',
             pointerId: e.pointerId,
             root,
             startClientX: e.clientX,
@@ -933,7 +1270,7 @@ function onPlanarPointerMove(e) {
 
     if (drag.kind === 'background') return;
 
-    if (drag.kind === 'prototypeButton') {
+    if (drag.kind === 'prototypeTap') {
         if (!drag.moved || !drag.root) return;
         const root = drag.root;
         const rect = state.renderer.domElement.getBoundingClientRect();
@@ -1025,10 +1362,9 @@ function onPlanarPointerUp(e) {
         state.renderer.domElement.releasePointerCapture(e.pointerId);
     } catch (_) {}
 
-    if (drag.kind === 'prototypeButton') {
+    if (drag.kind === 'prototypeTap') {
         if (!drag.moved && drag.root) {
-            // Use the button hit on pointerdown — do NOT re-raycast on release (avoids misses / wrong object).
-            runPrototypeButtonNavigation(drag.root);
+            runPrototypeNavigation(drag.root);
         } else {
             refreshLayersPanel();
         }
@@ -1448,6 +1784,7 @@ function createFrame(width, height, name = 'Frame') {
     group.userData.frameLabelMesh = labelPlane;
     group.userData.frameLabelTexture = labelTex;
 
+    ensureInteractionUserData(group.userData);
     state.lastFrameSize = { width, height };
 
     applySpatialToObject(group, { distance: 2.2, side: 0, height: 1.2, facingDeg: 0 });
@@ -1518,6 +1855,7 @@ function createXRButton(label = 'Button') {
     group.userData.selectable = true;
     group.userData.textFontSize = 56;
     group.userData.textColor = '#ffffff';
+    ensureInteractionUserData(group.userData);
 
     const w = 0.72;
     const h = 0.22;
@@ -1549,6 +1887,7 @@ function createXRPanel() {
     group.userData.voidType = 'panel';
     group.userData.selectable = true;
     group.userData.planarBaseHalf = { x: 0.6, y: 0.4 };
+    ensureInteractionUserData(group.userData);
 
     const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(1.2, 0.8, 0.04),
@@ -1578,6 +1917,7 @@ function createXRTextLabel(text = 'Label') {
     group.userData.textColor = '#e2e8f0';
     group.userData.textBg = 'rgba(15,23,42,0.35)';
     group.userData.planarBaseHalf = { x: 0.5, y: 0.125 };
+    ensureInteractionUserData(group.userData);
 
     const tex = makeTextTexture(text, 1024, 256, group.userData.textColor, group.userData.textBg, group.userData.textFontSize);
     const plane = new THREE.Mesh(
@@ -1601,6 +1941,7 @@ function createXRImagePlaceholder() {
     const w = 0.9;
     const h = 0.55;
     group.userData.planarBaseHalf = { x: w / 2, y: h / 2 };
+    ensureInteractionUserData(group.userData);
     const frame = new THREE.Mesh(
         new THREE.PlaneGeometry(w, h),
         new THREE.MeshStandardMaterial({
@@ -1697,6 +2038,62 @@ const _protoLinkA = new THREE.Vector3();
 const _protoLinkB = new THREE.Vector3();
 const _protoLinkMid = new THREE.Vector3();
 const _protoLinkBox = new THREE.Box3();
+const _protoLineEnd = new THREE.Vector3();
+
+function findObjectByUuidInProject(uuid) {
+    if (!uuid) return null;
+    for (let i = 0; i < state.objects.length; i++) {
+        if (state.objects[i].uuid === uuid) return state.objects[i];
+    }
+    return null;
+}
+
+function getPlanarLinkWorldPoint(root, side) {
+    if (!root) return null;
+    const t = root.userData.voidType;
+    let hx;
+    let hy;
+    const z = 0.02;
+    if (t === 'frame') {
+        hx = (root.userData.frameWidth || 1) * 0.5;
+        hy = (root.userData.frameHeight || 1) * 0.5;
+    } else {
+        const ph = root.userData.planarBaseHalf;
+        if (!ph) {
+            root.getWorldPosition(_protoLineEnd);
+            return _protoLineEnd.clone();
+        }
+        hx = ph.x;
+        hy = ph.y;
+    }
+    if (side === 'right') {
+        _protoEdgeLocal.set(hx, 0, z);
+    } else if (side === 'left') {
+        _protoEdgeLocal.set(-hx, 0, z);
+    } else {
+        return null;
+    }
+    _protoEdgeLocal.applyMatrix4(root.matrixWorld);
+    return _protoEdgeLocal.clone();
+}
+
+function resolveProtoLineEndForScreenLink(obj, targetScreen) {
+    const uuid = obj.userData.prototypeLinkTargetUuid;
+    if (uuid) {
+        const t = findObjectByUuidInProject(uuid);
+        if (t && isInteractionVoidType(t.userData.voidType)) {
+            const p = getPlanarLinkWorldPoint(t, 'left');
+            if (p) return p;
+        }
+    }
+    _protoLinkBox.setFromObject(targetScreen.group);
+    if (_protoLinkBox.isEmpty()) {
+        return null;
+    }
+    const min = _protoLinkBox.min;
+    const max = _protoLinkBox.max;
+    return new THREE.Vector3(min.x, (min.y + max.y) * 0.5, (min.z + max.z) * 0.5);
+}
 
 function updatePrototypeLinkLines() {
     const g = state.prototypeLinksGroup;
@@ -1717,16 +2114,22 @@ function updatePrototypeLinkLines() {
     if (!showLinks) return;
 
     state.objects.forEach((obj) => {
-        if (obj.userData?.voidType !== 'button') return;
+        if (!isInteractionVoidType(obj.userData?.voidType)) return;
         const linkId = obj.userData.onClickScreenId;
         if (!linkId) return;
         const targetScreen = state.screens.find((s) => s.id === linkId);
         if (!targetScreen) return;
 
-        obj.getWorldPosition(_protoLinkA);
-        _protoLinkBox.setFromObject(targetScreen.group);
-        if (_protoLinkBox.isEmpty()) return;
-        _protoLinkBox.getCenter(_protoLinkB);
+        const pr = getPlanarLinkWorldPoint(obj, 'right');
+        if (pr) {
+            _protoLinkA.copy(pr);
+        } else {
+            obj.getWorldPosition(_protoLinkA);
+        }
+        const end = resolveProtoLineEndForScreenLink(obj, targetScreen);
+        if (!end) return;
+        _protoLinkA.copy(start);
+        _protoLinkB.copy(end);
 
         _protoLinkMid.copy(_protoLinkA).lerp(_protoLinkB, 0.5);
         _protoLinkMid.y += 0.38;
@@ -1747,16 +2150,394 @@ function updatePrototypeLinkLines() {
     });
 }
 
+// ===== PROTOTYPE: HTML canvas overlay (2D bezier links + handle) =====
+const _pOv = new THREE.Vector3();
+const _pOv2 = new THREE.Vector3();
+const _pOv3 = new THREE.Vector3();
+
+function worldToProtoOverlayPx(v, out) {
+    _pOv.copy(v);
+    _pOv.project(state.camera);
+    if (!state.prototypeLinkUI) return 0;
+    const el = state.prototypeLinkUI.wrap;
+    const w = Math.max(1, el.clientWidth);
+    const h = Math.max(1, el.clientHeight);
+    out.x = (_pOv.x * 0.5 + 0.5) * w;
+    out.y = (-_pOv.y * 0.5 + 0.5) * h;
+    return _pOv.z;
+}
+
+function formatTransitionLabel(t, ms) {
+    const map = {
+        instant: 'Instant',
+        fade: 'Fade',
+        slideLeft: 'Slide L',
+        slideRight: 'Slide R',
+        scaleUp: 'Scale up',
+        scaleDown: 'Scale down'
+    };
+    const n = map[t] || t || 'Instant';
+    return `${n} ${Math.round(Number(ms) || 300)}ms`;
+}
+
+let _protoLinkModalContext = null;
+
+function openProtoLinkDestinationModal(sourceRoot, targetRoot) {
+    const srcScreen = sourceRoot.userData?.screenId;
+    const sel = document.getElementById('proto-dest-screen-select');
+    const modal = document.getElementById('proto-link-dest-modal');
+    if (!sel || !modal) return;
+    let n = 0;
+    sel.innerHTML = '';
+    state.screens.forEach((s) => {
+        if (s.id === srcScreen) return;
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+        n++;
+    });
+    if (n === 0) {
+        showNotification('Add another screen first, then link to it');
+        return;
+    }
+    sel.value = sel.options[0].value;
+    _protoLinkModalContext = { source: sourceRoot, target: targetRoot };
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeProtoLinkDestinationModal() {
+    const modal = document.getElementById('proto-link-dest-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    _protoLinkModalContext = null;
+}
+
+function confirmProtoLinkDestinationModal() {
+    const ctx = _protoLinkModalContext;
+    const sel = document.getElementById('proto-dest-screen-select');
+    if (!ctx || !ctx.source || !sel) {
+        closeProtoLinkDestinationModal();
+        return;
+    }
+    const toId = sel.value;
+    if (!toId) {
+        closeProtoLinkDestinationModal();
+        return;
+    }
+    ensureInteractionUserData(ctx.source.userData);
+    ctx.source.userData.onClickScreenId = toId;
+    if (ctx.target) ctx.source.userData.prototypeLinkTargetUuid = ctx.target.uuid;
+    else ctx.source.userData.prototypeLinkTargetUuid = '';
+    showNotification('Prototype link created');
+    scheduleRemoteProjectSave();
+    updatePrototypeLinkLines();
+    closeProtoLinkDestinationModal();
+}
+
+function pickProtoLinkableAt(clientX, clientY) {
+    if (!state.raycaster || !state.camera || !state.renderer) return null;
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    state.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    state.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    state.raycaster.setFromCamera(state.mouse, state.camera);
+    const hits = state.raycaster.intersectObjects(state.selectableObjects, true);
+    if (!hits.length) return null;
+    const root = resolveSelectableRoot(hits[0].object);
+    if (root && isInteractionVoidType(root.userData?.voidType)) return root;
+    return null;
+}
+
+function syncPrototypeLinkOverlaySize() {
+    const ui = state.prototypeLinkUI;
+    if (!ui || !state.renderer) return;
+    const host = state.renderer.domElement;
+    const w = host.clientWidth;
+    const h = host.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    ui.dpr = dpr;
+    ui.canvas.width = Math.floor(w * dpr);
+    ui.canvas.height = Math.floor(h * dpr);
+    ui.canvas.style.width = `${w}px`;
+    ui.canvas.style.height = `${h}px`;
+    ui.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function initPrototypeLinkOverlay(viewportElement) {
+    if (!viewportElement || state.prototypeLinkUI) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'prototype-link-overlay';
+    wrap.id = 'prototype-link-overlay';
+    const canvas = document.createElement('canvas');
+    canvas.className = 'prototype-link-canvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    const deletes = document.createElement('div');
+    deletes.className = 'prototype-link-deletes';
+    const handle = document.createElement('button');
+    handle.type = 'button';
+    handle.className = 'proto-link-handle';
+    handle.title = 'Drag to connect';
+    handle.setAttribute('aria-label', 'Drag to connect to another element');
+    wrap.appendChild(canvas);
+    wrap.appendChild(deletes);
+    wrap.appendChild(handle);
+    viewportElement.appendChild(wrap);
+    const ctx = canvas.getContext('2d');
+    state.prototypeLinkUI = { wrap, canvas, ctx, handle, deletes, dpr: 1 };
+
+    handle.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.editorMode !== 'prototype' || !state.prototypeHoverRoot) return;
+        const source = state.prototypeHoverRoot;
+        if (!isInteractionVoidType(source.userData.voidType)) return;
+        state.prototypeLinkDrag = {
+            source,
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            lastX: e.clientX,
+            lastY: e.clientY
+        };
+        handle.classList.add('is-visible');
+        try {
+            handle.setPointerCapture(e.pointerId);
+        } catch (_) {}
+        const onMove = (ev) => {
+            if (!state.prototypeLinkDrag || state.prototypeLinkDrag.pointerId !== ev.pointerId) return;
+            state.prototypeLinkDrag.lastX = ev.clientX;
+            state.prototypeLinkDrag.lastY = ev.clientY;
+            const t = pickProtoLinkableAt(ev.clientX, ev.clientY);
+            state.prototypeLinkDrag.hoverTarget = t && t !== state.prototypeLinkDrag.source ? t : null;
+        };
+        const onUp = (ev) => {
+            if (!state.prototypeLinkDrag || state.prototypeLinkDrag.pointerId !== ev.pointerId) return;
+            document.removeEventListener('pointermove', onMove, true);
+            document.removeEventListener('pointerup', onUp, true);
+            try {
+                handle.releasePointerCapture(ev.pointerId);
+            } catch (_) {}
+            const drag = state.prototypeLinkDrag;
+            state.prototypeLinkDrag = null;
+            const hov = pickProtoLinkableAt(ev.clientX, ev.clientY);
+            if (hov && hov !== drag.source && isInteractionVoidType(hov.userData.voidType)) {
+                openProtoLinkDestinationModal(drag.source, hov);
+            } else {
+                showNotification('Connection cancelled');
+            }
+        };
+        document.addEventListener('pointermove', onMove, true);
+        document.addEventListener('pointerup', onUp, true);
+    });
+
+    document.getElementById('proto-link-dest-confirm')?.addEventListener('click', confirmProtoLinkDestinationModal);
+    document.getElementById('proto-link-dest-cancel')?.addEventListener('click', closeProtoLinkDestinationModal);
+}
+
+function updatePrototypeLinkOverlay() {
+    const ui = state.prototypeLinkUI;
+    if (!ui || !state.renderer || !state.camera) return;
+    const designOnly =
+        state.editorMode === 'design' ||
+        state.spatialPreviewActive ||
+        (state.appPhase && state.appPhase !== 'editor');
+    ui.wrap.style.display = designOnly || !state.editorExperienceInitialized ? 'none' : 'block';
+    if (designOnly || state.editorMode !== 'prototype' || state.spatialPreviewActive) {
+        ui.handle.classList.remove('is-visible');
+        return;
+    }
+    if (state.prototypeLinkDrag) {
+        ui.handle.classList.add('is-visible');
+    }
+    syncPrototypeLinkOverlaySize();
+    const w = ui.wrap.clientWidth;
+    const h = ui.wrap.clientHeight;
+    const ctx = ui.ctx;
+    ctx.clearRect(0, 0, w, h);
+    const emphasis = state.selectedObject || state.prototypeHoverRoot;
+
+    const drawBezierWithAlpha = (p0, p1, p2, alpha) => {
+        const acc = 0.3 + 0.7 * alpha;
+        const stroke = `rgba(107,107,255,${0.2 + 0.8 * acc})`;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.quadraticCurveTo(p1.x, p1.y, p2.x, p2.y);
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
+        ctx.shadowColor = 'rgba(107,107,255,0.45)';
+        ctx.shadowBlur = 6;
+        ctx.stroke();
+        ctx.restore();
+        const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        ctx.save();
+        ctx.fillStyle = '#6b6bff';
+        ctx.translate(p2.x, p2.y);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-9, -4);
+        ctx.lineTo(-9, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    };
+
+    state.objects.forEach((obj) => {
+        if (!isInteractionVoidType(obj.userData?.voidType)) return;
+        const toId = obj.userData.onClickScreenId;
+        if (!toId) return;
+        const targetScreen = state.screens.find((s) => s.id === toId);
+        if (!targetScreen) return;
+        const start3 = getPlanarLinkWorldPoint(obj, 'right') || (obj.getWorldPosition(_pOv), _pOv.clone());
+        const end3 = resolveProtoLineEndForScreenLink(obj, targetScreen);
+        if (!end3) return;
+        worldToProtoOverlayPx(start3, _pOv2);
+        worldToProtoOverlayPx(end3, _pOv3);
+        const p0 = { x: _pOv2.x, y: _pOv2.y };
+        const p2 = { x: _pOv3.x, y: _pOv3.y };
+        const p1 = { x: (p0.x + p2.x) * 0.5, y: (p0.y + p2.y) * 0.5 - 24 };
+        let alpha;
+        if (!emphasis) alpha = 0.3;
+        else if (emphasis === obj) alpha = 1;
+        else alpha = 0.15;
+        drawBezierWithAlpha(p0, p1, p2, alpha);
+        const mx = 0.25 * p0.x + 0.5 * p1.x + 0.25 * p2.x;
+        const my = 0.25 * p0.y + 0.5 * p1.y + 0.25 * p2.y;
+        ensureInteractionUserData(obj.userData);
+        const lab = formatTransitionLabel(obj.userData.transitionType, obj.userData.transitionDuration);
+        ctx.save();
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.strokeText(lab, mx, my);
+        ctx.fillStyle = 'rgba(250,250,255,0.95)';
+        ctx.fillText(lab, mx, my);
+        ctx.restore();
+    });
+
+    if (state.prototypeLinkDrag && state.prototypeLinkDrag.source) {
+        const s = getPlanarLinkWorldPoint(state.prototypeLinkDrag.source, 'right') || (state.prototypeLinkDrag.source.getWorldPosition(_pOv), _pOv.clone());
+        worldToProtoOverlayPx(s, _pOv2);
+        const lx = state.prototypeLinkDrag.lastX ?? state.prototypeLinkDrag.startX;
+        const ly = state.prototypeLinkDrag.lastY ?? state.prototypeLinkDrag.startY;
+        const r = state.renderer.domElement.getBoundingClientRect();
+        const p0 = { x: _pOv2.x, y: _pOv2.y };
+        const p2 = { x: lx - r.left, y: ly - r.top };
+        const p1 = { x: (p0.x + p2.x) * 0.5, y: (p0.y + p2.y) * 0.5 - 20 };
+        drawBezierWithAlpha(p0, p1, p2, 1);
+        if (state.prototypeLinkDrag.hoverTarget) {
+            const ht = state.prototypeLinkDrag.hoverTarget;
+            _protoLinkBox.setFromObject(ht);
+            if (!_protoLinkBox.isEmpty()) {
+                const mn = _protoLinkBox.min;
+                const mx = _protoLinkBox.max;
+                const corners = [
+                    new THREE.Vector3(mn.x, mn.y, mn.z), new THREE.Vector3(mx.x, mn.y, mn.z),
+                    new THREE.Vector3(mx.x, mx.y, mn.z), new THREE.Vector3(mn.x, mx.y, mn.z),
+                    new THREE.Vector3(mn.x, mn.y, mx.z), new THREE.Vector3(mx.x, mn.y, mx.z),
+                    new THREE.Vector3(mx.x, mx.y, mx.z), new THREE.Vector3(mn.x, mx.y, mx.z)
+                ];
+                let x0 = Infinity;
+                let y0 = Infinity;
+                let x1 = -Infinity;
+                let y1 = -Infinity;
+                for (const c of corners) {
+                    worldToProtoOverlayPx(c, _pOv2);
+                    x0 = Math.min(x0, _pOv2.x);
+                    y0 = Math.min(y0, _pOv2.y);
+                    x1 = Math.max(x1, _pOv2.x);
+                    y1 = Math.max(y1, _pOv2.y);
+                }
+                ctx.save();
+                ctx.shadowColor = 'rgba(107,107,255,0.5)';
+                ctx.shadowBlur = 10;
+                ctx.strokeStyle = 'rgba(107,107,255,0.95)';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+                ctx.restore();
+            }
+        }
+    }
+
+    ui.deletes.innerHTML = '';
+    if (state.selectedObject && isInteractionVoidType(state.selectedObject.userData?.voidType)) {
+        const sel = state.selectedObject;
+        if (sel.userData.onClickScreenId) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'prototype-line-delete-x';
+            b.textContent = '×';
+            b.title = 'Remove connection';
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                ensureInteractionUserData(sel.userData);
+                sel.userData.onClickScreenId = '';
+                sel.userData.prototypeLinkTargetUuid = '';
+                showNotification('Connection removed');
+                scheduleRemoteProjectSave();
+                updateInteractionPanel(sel);
+            });
+            const toId = sel.userData.onClickScreenId;
+            const tsc = state.screens.find((s) => s.id === toId);
+            if (tsc) {
+                const end3 = resolveProtoLineEndForScreenLink(sel, tsc);
+                if (end3) {
+                    const start3 = getPlanarLinkWorldPoint(sel, 'right') || (sel.getWorldPosition(_pOv), _pOv.clone());
+                    worldToProtoOverlayPx(start3, _pOv2);
+                    worldToProtoOverlayPx(end3, _pOv3);
+                    const mx = (_pOv2.x + _pOv3.x) * 0.5;
+                    const my = (_pOv2.y + _pOv3.y) * 0.5;
+                    b.style.left = `${mx}px`;
+                    b.style.top = `${my}px`;
+                    ui.deletes.appendChild(b);
+                }
+            }
+        }
+    }
+
+    if (!state.prototypeLinkDrag && state.prototypeHoverRoot && isInteractionVoidType(state.prototypeHoverRoot.userData?.voidType)) {
+        const hp = getPlanarLinkWorldPoint(state.prototypeHoverRoot, 'right') || (state.prototypeHoverRoot.getWorldPosition(_pOv), _pOv.clone());
+        const z = worldToProtoOverlayPx(hp, _pOv2);
+        if (z > -1 && z < 1) {
+            ui.handle.classList.add('is-visible');
+            ui.handle.style.left = `${_pOv2.x}px`;
+            ui.handle.style.top = `${_pOv2.y}px`;
+        } else {
+            ui.handle.classList.remove('is-visible');
+        }
+    } else if (!state.prototypeLinkDrag) {
+        ui.handle.classList.remove('is-visible');
+    }
+}
+
 // ===== ANIMATION LOOP =====
 function animate() {
     requestAnimationFrame(animate);
 
     if (state.controls) state.controls.update();
 
+    if (state.lastPointerOverCanvas && state.lastViewportPointer && state.editorMode === 'prototype' && !state.prototypeLinkDrag) {
+        const p = state.lastViewportPointer;
+        const t = pickProtoLinkableAt(p.x, p.y);
+        state.prototypeHoverRoot = t;
+    }
+    if (!state.lastPointerOverCanvas) state.prototypeHoverRoot = null;
+
     updateViewportPosition();
     apply2DBillboards();
     updateClickAnimation();
+    updatePrototypeScreenNavJob();
     updatePrototypeLinkLines();
+    updatePrototypeLinkOverlay();
+
+    if (state.spatialPreviewKind === 'xr') return;
 
     if (state.renderer && state.scene && state.camera) {
         // Spatial preview: UI (screens/frames) stays visible; environment uses .visible=false at open (no per-frame cost).
@@ -1786,6 +2567,7 @@ function onWindowResize() {
         state.perspectiveCamera.updateProjectionMatrix();
     }
     updateOrthoCameraFrustum();
+    syncPrototypeLinkOverlaySize();
 }
 
 // ===== UPDATE VIEWPORT INFO =====
@@ -1876,9 +2658,16 @@ function setViewMode(mode) {
 
     syncViewModeUi();
 
-    const mainGrid = state.scene.getObjectByName('mainGrid');
-    if (mainGrid) mainGrid.visible = mode === '3d';
-    if (state.grid2d) state.grid2d.visible = mode === '2d';
+    applyFloorVisibility();
+    if (mode === '2d') {
+        state.scene.background = null;
+    } else {
+        if (state.activeEnvironmentPresetId && state.environmentTexture) {
+            state.scene.background = state.environmentTexture;
+        } else {
+            state.scene.background = state.defaultEditorBackground || new THREE.Color(0x0f0f0f);
+        }
+    }
 
     if (mode === '2d') {
         if (!state.controls3DDefaults) {
@@ -1916,7 +2705,11 @@ function syncViewModeUi() {
     const badge = document.getElementById('viewport-mode-badge');
     const modeToggle = document.getElementById('btn-view-mode-toggle');
     if (badge) badge.textContent = state.viewMode === '2d' ? '2D' : '3D';
-    if (modeToggle) modeToggle.textContent = state.viewMode === '2d' ? '3D' : '2D';
+    if (modeToggle) {
+        const icon = modeToggle.querySelector('[data-lucide]');
+        if (icon) icon.setAttribute('data-lucide', state.viewMode === '2d' ? 'box' : 'layout-dashboard');
+        if (window.lucide?.createIcons) window.lucide.createIcons();
+    }
 }
 
 function apply2DBillboards() {
@@ -2077,17 +2870,33 @@ function onFrameNamePropInput() {
 }
 
 // ===== TOGGLE GRID/SAFE ZONE =====
+function syncFloorToggleButton() {
+    const btn = document.getElementById('viewport-toggle-grid');
+    if (!btn) return;
+    btn.classList.toggle('active', !!state.floorVisible);
+    btn.classList.toggle('is-off', !state.floorVisible);
+    btn.setAttribute('aria-pressed', state.floorVisible ? 'true' : 'false');
+    btn.title = state.floorVisible ? 'Hide Floor/Grid' : 'Show Floor/Grid';
+}
+
+function applyFloorVisibility() {
+    if (!state.scene) return;
+    const mainGrid = state.scene.getObjectByName('mainGrid');
+    const ground = state.scene.getObjectByName('Ground');
+    if (mainGrid) mainGrid.visible = state.floorVisible && state.viewMode === '3d';
+    if (ground) ground.visible = state.floorVisible && state.viewMode === '3d';
+    if (state.grid2d) state.grid2d.visible = state.floorVisible && state.viewMode === '2d';
+    syncFloorToggleButton();
+}
+
+function toggleFloorVisibility() {
+    state.floorVisible = !state.floorVisible;
+    applyFloorVisibility();
+    return state.floorVisible;
+}
+
 function toggleGrid() {
-    if (state.viewMode === '2d' && state.grid2d) {
-        state.grid2d.visible = !state.grid2d.visible;
-        return state.grid2d.visible;
-    }
-    const grid = state.scene.getObjectByName('mainGrid');
-    if (grid) {
-        grid.visible = !grid.visible;
-        return grid.visible;
-    }
-    return false;
+    return toggleFloorVisibility();
 }
 
 function toggleSafeZone() {
@@ -2265,9 +3074,34 @@ function initializeViewportControls() {
     const gridBtn = document.getElementById('viewport-toggle-grid');
     if (gridBtn) {
         gridBtn.addEventListener('click', () => {
-            gridBtn.classList.toggle('active');
             const isVisible = toggleGrid();
-            showNotification(`Grid: ${isVisible ? 'On' : 'Off'}`);
+            showNotification(`Floor/Grid: ${isVisible ? 'On' : 'Off'}`);
+        });
+        syncFloorToggleButton();
+    }
+
+    const colorPicker = document.getElementById('canvas-color-picker');
+    const colorReset = document.getElementById('canvas-color-reset');
+    if (colorPicker) {
+        colorPicker.addEventListener('input', (e) => {
+            const hex = e.target.value;
+            const viewport = document.getElementById('viewport-3d');
+            if (viewport) viewport.style.background = hex;
+            state.defaultEditorBackground = new THREE.Color(hex);
+            if (state.scene && !state.activeEnvironmentPresetId && state.viewMode === '3d') {
+                state.scene.background = state.defaultEditorBackground;
+            }
+            if (state.renderer) {
+                state.renderer.setClearColor(new THREE.Color(hex), 1);
+            }
+        });
+    }
+    if (colorReset) {
+        colorReset.addEventListener('click', () => {
+            const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+            const resetHex = isLight ? '#f5f5f5' : '#0d0d0d';
+            if (colorPicker) colorPicker.value = resetHex;
+            if (colorPicker) colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
         });
     }
 
@@ -2424,6 +3258,7 @@ function showNotification(message) {
 // ===== EXPORT / SAVE =====
 function serializeObjectForVoid(o) {
     const u = o.userData || {};
+    ensureInteractionUserData(u);
     const base = {
         id: o.uuid,
         name: o.name,
@@ -2432,6 +3267,10 @@ function serializeObjectForVoid(o) {
         text: u.text || '',
         onClickScreenId: u.onClickScreenId || '',
         clickAnimation: u.clickAnimation || 'none',
+        transitionType: u.transitionType || 'instant',
+        transitionDuration: u.transitionDuration ?? 300,
+        transitionEasing: u.transitionEasing || 'ease-in-out',
+        prototypeLinkTargetUuid: u.prototypeLinkTargetUuid || '',
         screenId: u.screenId || '',
         position: { x: o.position.x, y: o.position.y, z: o.position.z },
         rotation: { x: o.rotation.x, y: o.rotation.y, z: o.rotation.z },
@@ -2560,6 +3399,11 @@ function buildImportedButton(data) {
     group.userData.label = label;
     group.userData.onClickScreenId = data.onClickScreenId || '';
     group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.prototypeLinkTargetUuid = data.prototypeLinkTargetUuid || '';
+    group.userData.transitionType = data.transitionType;
+    group.userData.transitionDuration = data.transitionDuration;
+    group.userData.transitionEasing = data.transitionEasing;
+    ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
     group.userData.textFontSize = 56;
     group.userData.textColor = '#ffffff';
@@ -2591,6 +3435,13 @@ function buildImportedPanel(data) {
     group.name = data.name || 'Panel';
     safeSetExportedUuid(group, data.id);
     group.userData.voidType = 'panel';
+    group.userData.onClickScreenId = data.onClickScreenId || '';
+    group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.prototypeLinkTargetUuid = data.prototypeLinkTargetUuid || '';
+    group.userData.transitionType = data.transitionType;
+    group.userData.transitionDuration = data.transitionDuration;
+    group.userData.transitionEasing = data.transitionEasing;
+    ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
     group.userData.planarBaseHalf = { x: 0.6, y: 0.4 };
 
@@ -2615,6 +3466,13 @@ function buildImportedText(data) {
     group.name = data.name || 'Text';
     safeSetExportedUuid(group, data.id);
     group.userData.voidType = 'text';
+    group.userData.onClickScreenId = data.onClickScreenId || '';
+    group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.prototypeLinkTargetUuid = data.prototypeLinkTargetUuid || '';
+    group.userData.transitionType = data.transitionType;
+    group.userData.transitionDuration = data.transitionDuration;
+    group.userData.transitionEasing = data.transitionEasing;
+    ensureInteractionUserData(group.userData);
     group.userData.text = text;
     group.userData.selectable = true;
     group.userData.textFontSize = 56;
@@ -2637,6 +3495,13 @@ function buildImportedImage(data) {
     group.name = data.name || 'Image';
     safeSetExportedUuid(group, data.id);
     group.userData.voidType = 'image';
+    group.userData.onClickScreenId = data.onClickScreenId || '';
+    group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.prototypeLinkTargetUuid = data.prototypeLinkTargetUuid || '';
+    group.userData.transitionType = data.transitionType;
+    group.userData.transitionDuration = data.transitionDuration;
+    group.userData.transitionEasing = data.transitionEasing;
+    ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
 
     const w = 0.9;
@@ -2680,6 +3545,13 @@ function buildImportedFrame(data, screenIdForScope) {
     group.userData.frameHeight = height;
     group.userData.frameLabel = label;
     group.userData.anchor = data.anchor || 'world';
+    group.userData.onClickScreenId = data.onClickScreenId || '';
+    group.userData.clickAnimation = data.clickAnimation || 'none';
+    group.userData.prototypeLinkTargetUuid = data.prototypeLinkTargetUuid || '';
+    group.userData.transitionType = data.transitionType;
+    group.userData.transitionDuration = data.transitionDuration;
+    group.userData.transitionEasing = data.transitionEasing;
+    ensureInteractionUserData(group.userData);
 
     const fillMat = new THREE.MeshStandardMaterial({
         color: 0x0f172a,
@@ -2808,9 +3680,13 @@ function setupButtonLinkListener() {
     const sel = document.getElementById('button-onclick-screen');
     if (!sel) return;
     sel.addEventListener('change', () => {
-        if (state.selectedObject?.userData?.voidType === 'button') {
-            state.selectedObject.userData.onClickScreenId = sel.value || '';
-            showNotification(state.selectedObject.userData.onClickScreenId ? 'Button link updated' : 'Button link cleared');
+        const o = state.selectedObject;
+        if (o && isInteractionVoidType(o.userData?.voidType)) {
+            ensureInteractionUserData(o.userData);
+            o.userData.onClickScreenId = sel.value || '';
+            showNotification(o.userData.onClickScreenId ? 'On Click link updated' : 'On Click link cleared');
+            scheduleRemoteProjectSave();
+            updatePrototypeLinkLines();
         }
     });
 }
@@ -2826,14 +3702,63 @@ function setupFrameAnchorListener() {
 }
 
 function setupButtonAnimationListener() {
-    const sel = document.getElementById('button-click-animation');
-    if (!sel) return;
-    sel.addEventListener('change', () => {
-        if (state.selectedObject?.userData?.voidType === 'button') {
-            state.selectedObject.userData.clickAnimation = sel.value || 'none';
-            showNotification('Click animation updated');
-        }
-    });
+    const leg = document.getElementById('button-click-animation');
+    if (leg) {
+        leg.addEventListener('change', () => {
+            const o = state.selectedObject;
+            if (o && isInteractionVoidType(o.userData?.voidType)) {
+                o.userData.clickAnimation = leg.value || 'none';
+                showNotification('Legacy animation (use Animation type for new projects)');
+            }
+        });
+    }
+    const t = document.getElementById('proto-transition-type');
+    if (t) {
+        t.addEventListener('change', () => {
+            const o = state.selectedObject;
+            if (o && isInteractionVoidType(o.userData?.voidType)) {
+                ensureInteractionUserData(o.userData);
+                o.userData.transitionType = t.value || 'instant';
+                scheduleRemoteProjectSave();
+            }
+        });
+    }
+    const d = document.getElementById('proto-transition-duration');
+    if (d) {
+        const applyDur = () => {
+            const o = state.selectedObject;
+            if (o && isInteractionVoidType(o.userData?.voidType)) {
+                const v = Math.max(0, parseInt(d.value, 10) || 0);
+                o.userData.transitionDuration = v;
+                scheduleRemoteProjectSave();
+            }
+        };
+        d.addEventListener('change', applyDur);
+        d.addEventListener('input', applyDur);
+    }
+    const e = document.getElementById('proto-transition-easing');
+    if (e) {
+        e.addEventListener('change', () => {
+            const o = state.selectedObject;
+            if (o && isInteractionVoidType(o.userData?.voidType)) {
+                o.userData.transitionEasing = e.value || 'ease-in-out';
+                scheduleRemoteProjectSave();
+            }
+        });
+    }
+    const rm = document.getElementById('btn-remove-proto-link');
+    if (rm) {
+        rm.addEventListener('click', () => {
+            const o = state.selectedObject;
+            if (o && isInteractionVoidType(o.userData?.voidType)) {
+                o.userData.onClickScreenId = '';
+                o.userData.prototypeLinkTargetUuid = '';
+                showNotification('Connection removed');
+                scheduleRemoteProjectSave();
+                updateInteractionPanel(o);
+            }
+        });
+    }
 }
 
 // ===== ASSET/COLOR/PAGE INTERACTIONS =====
@@ -2859,6 +3784,164 @@ function initializeColors() {
     });
 }
 
+// ===== ENVIRONMENT PRESETS (optional design-time context) =====
+const ENVIRONMENT_PRESETS = [
+    {
+        id: 'living-room',
+        name: 'Living Room',
+        description: 'Warm interior context',
+        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/living_room_2k.hdr',
+        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/living_room_4k.hdr',
+        previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/living_room.png?height=160'
+    },
+    {
+        id: 'modern-office',
+        name: 'Modern Office',
+        description: 'Clean commercial lighting',
+        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/modern_office_2_2k.hdr',
+        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/modern_office_4k.hdr',
+        previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/modern_office.png?height=160'
+    },
+    {
+        id: 'bedroom',
+        name: 'Bedroom',
+        description: 'Calm personal interior',
+        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/hotel_room_2k.hdr',
+        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/vintage_room_4k.hdr',
+        previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/vintage_room.png?height=160'
+    },
+    {
+        id: 'minimal-studio',
+        name: 'Minimal Studio',
+        description: 'Neutral controlled backdrop',
+        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/studio_small_08_4k.hdr',
+        previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/studio_small_08.png?height=160'
+    },
+    {
+        id: 'outdoor-space',
+        name: 'Outdoor Space',
+        description: 'Open daylight perspective',
+        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/kloppenheim_06_4k.hdr',
+        previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/kloppenheim_06.png?height=160'
+    }
+];
+
+function setEnvironmentLoading(loading, message = 'Loading environment...') {
+    state.environmentLoading = !!loading;
+    const indicator = document.getElementById('environment-loading-indicator');
+    if (!indicator) return;
+    indicator.textContent = message;
+    indicator.style.display = loading ? 'block' : 'none';
+}
+
+function loadHdriWithFallback(url, fallbackUrl, onLoad, onFail) {
+    const loader = new RGBELoader();
+    loader.setDataType(THREE.HalfFloatType);
+    loader.load(
+        url,
+        onLoad,
+        undefined,
+        () => {
+            if (!fallbackUrl || fallbackUrl === url) {
+                onFail();
+                return;
+            }
+            loader.load(fallbackUrl, onLoad, undefined, onFail);
+        }
+    );
+}
+
+function refreshEnvironmentPresetUi() {
+    const root = document.getElementById('environments-list');
+    if (!root) return;
+    root.querySelectorAll('.environment-card').forEach((card) => {
+        card.classList.toggle('active', card.dataset.environmentId === state.activeEnvironmentPresetId);
+    });
+}
+
+function clearEnvironmentPreset(showToast = true) {
+    if (!state.scene) return;
+    if (state.environmentTexture) {
+        state.environmentTexture.dispose();
+        state.environmentTexture = null;
+    }
+    state.environmentLoadRequestId += 1;
+    setEnvironmentLoading(false);
+    state.activeEnvironmentPresetId = null;
+    state.scene.background = null;
+    state.scene.environment = null;
+    if (state.viewMode === '3d') {
+        state.scene.background = state.defaultEditorBackground || new THREE.Color(0x0f0f0f);
+    }
+    refreshEnvironmentPresetUi();
+    if (showToast) showNotification('Default canvas restored');
+}
+
+function applyEnvironmentPreset(presetId) {
+    if (!state.scene) {
+        showNotification('Open the editor first.');
+        return;
+    }
+    const preset = ENVIRONMENT_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    const requestId = ++state.environmentLoadRequestId;
+    setEnvironmentLoading(true);
+
+    loadHdriWithFallback(
+        preset.imageUrl,
+        preset.fallbackUrl,
+        (texture) => {
+            if (requestId !== state.environmentLoadRequestId) {
+                texture.dispose();
+                return;
+            }
+            if (state.environmentTexture) state.environmentTexture.dispose();
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.generateMipmaps = false;
+            texture.needsUpdate = true;
+            state.environmentTexture = texture;
+            state.scene.environment = texture;
+            state.scene.background = state.viewMode === '2d' ? null : texture;
+            state.activeEnvironmentPresetId = preset.id;
+            setEnvironmentLoading(false);
+            refreshEnvironmentPresetUi();
+            showNotification(`Environment: ${preset.name}`);
+        },
+        () => {
+            if (requestId !== state.environmentLoadRequestId) return;
+            setEnvironmentLoading(false, 'Environment unavailable');
+            showNotification('Environment unavailable');
+        }
+    );
+}
+
+function initializeEnvironmentsUI() {
+    const list = document.getElementById('environments-list');
+    const clearBtn = document.getElementById('btn-clear-environment');
+    if (!list) return;
+
+    list.innerHTML = '';
+    ENVIRONMENT_PRESETS.forEach((preset) => {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'environment-card';
+        card.dataset.environmentId = preset.id;
+        card.innerHTML = `
+            <img class="environment-card-preview" src="${preset.previewUrl}" alt="${escapeHtml(preset.name)} preview" loading="lazy" />
+            <span class="environment-card-title">${escapeHtml(preset.name)}</span>
+            <span class="environment-card-subtitle">${escapeHtml(preset.description)}</span>
+        `;
+        card.addEventListener('click', () => applyEnvironmentPreset(preset.id));
+        list.appendChild(card);
+    });
+
+    clearBtn?.addEventListener('click', () => clearEnvironmentPreset(true));
+    refreshEnvironmentPresetUi();
+    initializeLucideIcons();
+}
+
 function initializeScreensUI() {
     const btn = document.getElementById('btn-add-screen');
     if (btn) {
@@ -2874,6 +3957,9 @@ function initializeScreensUI() {
 // ===== DESIGN / PROTOTYPE + SPATIAL PREVIEW (camera compositing) =====
 function setEditorMode(mode) {
     const prev = state.editorMode;
+    state.prototypeLinkDrag = null;
+    state.prototypeHoverRoot = null;
+    if (mode !== 'prototype') closeProtoLinkDestinationModal();
 
     // Entering Prototype (Play) Mode: remember which screen we were editing (Figma-style return).
     if (mode === 'prototype' && prev !== 'prototype') {
@@ -2942,6 +4028,417 @@ function exitSpatialPreviewEnvironment() {
     state.spatialPreviewMode = false;
 }
 
+function isIPhoneSafari() {
+    const ua = navigator.userAgent || '';
+    const isIPhone = /iPhone/i.test(ua);
+    const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS/i.test(ua);
+    return isIPhone && isSafari;
+}
+
+function encodeMobilePreviewPayload(data) {
+    try {
+        return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+    } catch {
+        return '';
+    }
+}
+
+function decodeMobilePreviewPayload(raw) {
+    if (!raw) return null;
+    try {
+        const json = decodeURIComponent(escape(atob(raw)));
+        return JSON.parse(json);
+    } catch {
+        return null;
+    }
+}
+
+function getMobilePreviewPayloadFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('voidMobilePreview') !== '1') return null;
+    const hash = window.location.hash || '';
+    const raw = hash.startsWith('#v=') ? hash.slice(3) : '';
+    return decodeMobilePreviewPayload(raw);
+}
+
+function createWorldClone(object) {
+    const clone = object.clone(true);
+    object.updateMatrixWorld(true);
+    clone.matrixAutoUpdate = true;
+    clone.position.setFromMatrixPosition(object.matrixWorld);
+    clone.quaternion.setFromRotationMatrix(object.matrixWorld);
+    clone.scale.setFromMatrixScale(object.matrixWorld);
+    return clone;
+}
+
+async function launchQuickLookForActiveScreen() {
+    if (!state.scene) {
+        showNotification('Open editor first.');
+        return;
+    }
+    const screen = getActiveScreen();
+    if (!screen) {
+        showNotification('No active screen to preview.');
+        return;
+    }
+
+    const exportScene = new THREE.Scene();
+    const root = new THREE.Group();
+    root.name = `VoidAR:${screen.name}`;
+    exportScene.add(root);
+
+    screen.group.updateMatrixWorld(true);
+    screen.group.children.forEach((child) => {
+        if (child.userData?.isEnvironment) return;
+        if (child.visible === false) return;
+        root.add(createWorldClone(child));
+    });
+
+    if (root.children.length === 0) {
+        showNotification('Add frames/components before AR preview.');
+        return;
+    }
+
+    try {
+        const exporter = new USDZExporter();
+        const arrayBuffer = await exporter.parse(exportScene);
+        const blob = new Blob([arrayBuffer], { type: 'model/vnd.usdz+zip' });
+        const usdzUrl = URL.createObjectURL(blob);
+
+        const anchor = document.createElement('a');
+        anchor.rel = 'ar';
+        anchor.href = usdzUrl;
+        const img = document.createElement('img');
+        img.alt = 'Open AR';
+        img.src =
+            'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
+        anchor.appendChild(img);
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+
+        setTimeout(() => URL.revokeObjectURL(usdzUrl), 20000);
+    } catch (err) {
+        showNotification(`Could not build AR model: ${err?.message || 'Export failed'}`);
+    }
+}
+
+function openDesktopMobilePreviewShareDialog() {
+    const payload = encodeMobilePreviewPayload(buildVoidExport());
+    if (!payload) {
+        showNotification('Could not prepare mobile preview link.');
+        return;
+    }
+
+    const base = `${window.location.origin}${window.location.pathname}`;
+    const shareUrl = `${base}?voidMobilePreview=1#v=${encodeURIComponent(payload)}`;
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`;
+
+    const old = document.getElementById('void-mobile-preview-share');
+    if (old) old.remove();
+
+    const overlay = document.getElementById('spatial-preview-overlay');
+    const panel = document.createElement('div');
+    panel.id = 'void-mobile-preview-share';
+    panel.style.cssText = `
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        z-index: 12000;
+        pointer-events: none;
+    `;
+    const card = document.createElement('div');
+    card.style.cssText = `
+        width: min(92vw, 360px);
+        max-height: min(52vh, 420px);
+        overflow: auto;
+        z-index: 12000;
+        background: rgba(15,23,42,0.95);
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 16px;
+        color: #e2e8f0;
+        font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+        pointer-events: auto;
+    `;
+    card.innerHTML = `
+        <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Open iPhone AR Preview</div>
+        <p style="margin:0 0 10px 0;color:#94a3b8;">Scan this QR on iPhone Safari. It opens Quick Look AR with your current screen.</p>
+        <div style="display:flex;justify-content:center;margin:8px 0 12px;">
+            <img src="${qrSrc}" alt="Preview QR" width="220" height="220" style="border-radius:8px;border:1px solid #334155;background:#fff;" />
+        </div>
+        <input id="void-mobile-preview-link-input" value="${shareUrl}" readonly style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#020617;color:#cbd5e1;" />
+        <p style="margin:10px 0 0 0;color:#64748b;">If URL contains localhost, open this app via your Mac's LAN IP first.</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+            <button id="void-mobile-preview-copy" style="padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;">Copy Link</button>
+            <button id="void-mobile-preview-close" style="padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#334155;color:#fff;cursor:pointer;">Close</button>
+        </div>
+    `;
+    panel.appendChild(card);
+    if (overlay) overlay.appendChild(panel);
+    else document.body.appendChild(panel);
+
+    const input = card.querySelector('#void-mobile-preview-link-input');
+    card.querySelector('#void-mobile-preview-close')?.addEventListener('click', () => panel.remove());
+    card.querySelector('#void-mobile-preview-copy')?.addEventListener('click', async () => {
+        try {
+            if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(shareUrl);
+            else {
+                input?.select();
+                document.execCommand('copy');
+            }
+            showNotification('Mobile preview link copied');
+        } catch {
+            showNotification('Copy failed — use the link field');
+        }
+    });
+}
+
+function initializeIPhoneQuickLookEntry() {
+    const payload = getMobilePreviewPayloadFromUrl();
+    if (!payload) return;
+
+    setAppPhase('editor');
+    applyVoidImport(payload);
+    setViewMode('3d');
+
+    const old = document.getElementById('void-mobile-ar-launch');
+    if (old) old.remove();
+    const launcher = document.createElement('div');
+    launcher.id = 'void-mobile-ar-launch';
+    launcher.style.cssText = `
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        z-index: 11000;
+        background: rgba(15,23,42,0.94);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 12px;
+        color: #e2e8f0;
+        font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    `;
+    launcher.innerHTML = `
+        <div style="font-weight:600;margin-bottom:6px;">iPhone AR Preview Ready</div>
+        <div style="color:#94a3b8;margin-bottom:10px;">Tap to open AR Quick Look and place this UI on a real floor or wall.</div>
+        <button id="void-mobile-ar-launch-btn" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#4f46e5;color:white;font-weight:600;cursor:pointer;">Launch AR on this iPhone</button>
+    `;
+    document.body.appendChild(launcher);
+    launcher.querySelector('#void-mobile-ar-launch-btn')?.addEventListener('click', () => {
+        launchQuickLookForActiveScreen();
+    });
+}
+
+function createSpatialReticle() {
+    const geo = new THREE.RingGeometry(0.08, 0.1, 40);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0x5be7ff,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide
+    });
+    const reticle = new THREE.Mesh(geo, mat);
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    reticle.name = 'SpatialPreviewReticle';
+    return reticle;
+}
+
+function saveObjectPoseForSpatialPreview(object) {
+    if (!object) return null;
+    return {
+        parent: object.parent || null,
+        position: object.position.clone(),
+        quaternion: object.quaternion.clone(),
+        scale: object.scale.clone()
+    };
+}
+
+function restoreObjectPoseForSpatialPreview(object, pose) {
+    if (!object || !pose) return;
+    if (pose.parent && object.parent !== pose.parent) {
+        pose.parent.attach(object);
+    }
+    object.position.copy(pose.position);
+    object.quaternion.copy(pose.quaternion);
+    object.scale.copy(pose.scale);
+}
+
+function getSpatialPreviewAnchorRoots() {
+    // Anchor whole screen for simplest convincing "placed UI board" behavior.
+    const screenGroup = getActiveScreenGroup();
+    if (!screenGroup) return [];
+    return [screenGroup];
+}
+
+function updateSpatialPreviewHint(text) {
+    const hint = document.getElementById('spatial-preview-hint');
+    if (hint) hint.textContent = text;
+}
+
+function onSpatialXRSelect() {
+    const xr = state.spatialXR;
+    if (!xr || xr.placed || !xr.lastHit) return;
+    xr.pendingPlace = true;
+}
+
+async function placeSpatialXRAnchor(frame) {
+    const xr = state.spatialXR;
+    if (!xr || xr.placed || !xr.lastHit || !state.scene) return;
+    xr.pendingPlace = false;
+
+    if (!xr.savedPoses.size) {
+        xr.anchorTargets.forEach((target) => {
+            xr.savedPoses.set(target.uuid, { object: target, pose: saveObjectPoseForSpatialPreview(target) });
+        });
+    }
+
+    if (xr.lastHit.createAnchor) {
+        try {
+            xr.anchor = await xr.lastHit.createAnchor();
+            xr.anchorSpace = xr.anchor.anchorSpace;
+        } catch {
+            xr.anchor = null;
+            xr.anchorSpace = null;
+        }
+    }
+
+    if (!xr.anchorSpace) {
+        const pose = xr.lastHit.getPose(xr.refSpace);
+        if (!pose) return;
+        xr.anchorRoot.matrix.fromArray(pose.transform.matrix);
+        xr.anchorRoot.matrix.decompose(xr.anchorRoot.position, xr.anchorRoot.quaternion, xr.anchorRoot.scale);
+    }
+
+    xr.anchorTargets.forEach((target) => xr.anchorRoot.attach(target));
+    xr.placed = true;
+    xr.reticle.visible = false;
+    updateSpatialPreviewHint('Anchored in room. Walk around to inspect scale, depth and perspective.');
+}
+
+function updateSpatialXRFrame(_time, frame) {
+    const xr = state.spatialXR;
+    if (!xr || !frame) return;
+
+    if (!xr.placed) {
+        const hits = frame.getHitTestResults(xr.hitTestSource);
+        if (hits.length > 0) {
+            xr.lastHit = hits[0];
+            const pose = xr.lastHit.getPose(xr.refSpace);
+            if (pose) {
+                xr.reticle.visible = true;
+                xr.reticle.matrix.fromArray(pose.transform.matrix);
+            }
+        } else {
+            xr.lastHit = null;
+            xr.reticle.visible = false;
+        }
+    }
+
+    if (xr.anchorSpace) {
+        const anchorPose = frame.getPose(xr.anchorSpace, xr.refSpace);
+        if (anchorPose) {
+            xr.anchorRoot.matrix.fromArray(anchorPose.transform.matrix);
+            xr.anchorRoot.matrix.decompose(xr.anchorRoot.position, xr.anchorRoot.quaternion, xr.anchorRoot.scale);
+        }
+    }
+
+    if (xr.pendingPlace && !xr.placeLock) {
+        xr.placeLock = true;
+        placeSpatialXRAnchor(frame)
+            .catch(() => {})
+            .finally(() => {
+                if (state.spatialXR) state.spatialXR.placeLock = false;
+            });
+    }
+
+    state.renderer.render(state.scene, state.camera);
+}
+
+async function openSpatialPreviewXR(overlay, host) {
+    if (!navigator.xr || !state.renderer || !state.scene) return false;
+    const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+    if (!supported) return false;
+
+    const session = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['local-floor', 'hit-test'],
+        optionalFeatures: ['anchors', 'plane-detection', 'depth-sensing', 'dom-overlay'],
+        domOverlay: overlay ? { root: overlay } : undefined
+    });
+
+    state.savedSceneBackground = state.scene.background;
+    state.scene.background = null;
+    state.renderer.setClearAlpha(0);
+    enterSpatialPreviewEnvironment();
+
+    state.renderer.xr.enabled = true;
+    await state.renderer.xr.setSession(session);
+    host.appendChild(state.renderer.domElement);
+
+    const refSpace = await session.requestReferenceSpace('local-floor');
+    const viewerSpace = await session.requestReferenceSpace('viewer');
+    const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+    const anchorRoot = new THREE.Group();
+    anchorRoot.name = 'SpatialXRAnchorRoot';
+    state.scene.add(anchorRoot);
+
+    const reticle = createSpatialReticle();
+    state.scene.add(reticle);
+
+    state.spatialXR = {
+        session,
+        refSpace,
+        viewerSpace,
+        hitTestSource,
+        anchor: null,
+        anchorSpace: null,
+        anchorRoot,
+        reticle,
+        lastHit: null,
+        pendingPlace: false,
+        placeLock: false,
+        placed: false,
+        savedPoses: new Map(),
+        anchorTargets: getSpatialPreviewAnchorRoots()
+    };
+
+    session.addEventListener('select', onSpatialXRSelect);
+    session.addEventListener('end', () => {
+        if (state.spatialPreviewActive) closeSpatialPreview();
+    });
+
+    state.renderer.setAnimationLoop(updateSpatialXRFrame);
+    state.spatialPreviewKind = 'xr';
+    return true;
+}
+
+function teardownSpatialPreviewXR({ endSession = false } = {}) {
+    const xr = state.spatialXR;
+    if (!xr || !state.scene || !state.renderer) return;
+
+    state.renderer.setAnimationLoop(null);
+
+    xr.savedPoses.forEach(({ object, pose }) => {
+        restoreObjectPoseForSpatialPreview(object, pose);
+    });
+
+    xr.hitTestSource?.cancel?.();
+    if (xr.reticle?.parent) xr.reticle.parent.remove(xr.reticle);
+    if (xr.anchorRoot?.parent) xr.anchorRoot.parent.remove(xr.anchorRoot);
+
+    xr.session?.removeEventListener?.('select', onSpatialXRSelect);
+    if (endSession && xr.session) {
+        xr.session.end().catch(() => {});
+    }
+
+    state.renderer.xr.enabled = false;
+    state.spatialXR = null;
+}
+
 async function openSpatialPreview() {
     const overlay = document.getElementById('spatial-preview-overlay');
     const video = document.getElementById('spatial-preview-video');
@@ -2950,6 +4447,37 @@ async function openSpatialPreview() {
     if (!overlay || !video || !host || !mainVp || !state.renderer || !state.scene) return;
 
     try {
+        const isMobileDevice = /Android|iPad|iPhone|iPod/i.test(navigator.userAgent || '');
+
+        // Desktop flow: show non-blocking QR + link while webcam preview runs.
+        if (!isMobileDevice) {
+            openDesktopMobilePreviewShareDialog();
+        }
+
+        // iPhone Safari: Quick Look gives the most reliable room-anchored AR today.
+        if (isIPhoneSafari()) {
+            await launchQuickLookForActiveScreen();
+            return;
+        }
+
+        const openedXR = await openSpatialPreviewXR(overlay, host).catch(() => false);
+        if (openedXR) {
+            if (video) {
+                video.srcObject = null;
+                video.style.display = 'none';
+            }
+            state.spatialPreviewActive = true;
+            overlay.classList.add('is-open');
+            overlay.setAttribute('aria-hidden', 'false');
+            onWindowResize();
+            updateSpatialPreviewHint('Move device to detect floor/walls, then tap to anchor UI in space.');
+            showNotification('Spatial AR preview');
+            updateTransformControlsForViewMode();
+            return;
+        }
+
+        state.spatialPreviewKind = 'camera';
+        if (video) video.style.display = '';
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
                 facingMode: { ideal: 'environment' },
@@ -2975,14 +4503,11 @@ async function openSpatialPreview() {
         overlay.setAttribute('aria-hidden', 'false');
         onWindowResize();
 
-        const hint = document.getElementById('spatial-preview-hint');
-        if (hint) {
-            hint.textContent =
-                'Drag to move; drag corners to resize — same scene as Design Mode (no gizmo in preview).';
-        }
+        updateSpatialPreviewHint('Move your camera slowly to feel the depth');
         showNotification('Spatial preview');
         updateTransformControlsForViewMode();
     } catch (err) {
+        state.spatialPreviewKind = null;
         showNotification(`Camera unavailable: ${err?.message || 'Permission denied'}`);
     }
 }
@@ -2992,17 +4517,23 @@ function closeSpatialPreview() {
     const mainVp = document.getElementById('viewport-3d');
     const video = document.getElementById('spatial-preview-video');
 
-    // Restore ground / grid / guides before moving renderer back to the main viewport.
-    exitSpatialPreviewEnvironment();
+    if (state.spatialPreviewKind === 'xr') {
+        teardownSpatialPreviewXR({ endSession: true });
+    }
 
     if (state.spatialPreviewStream) {
         state.spatialPreviewStream.getTracks().forEach((t) => t.stop());
         state.spatialPreviewStream = null;
     }
-    if (video) video.srcObject = null;
+    if (video) {
+        video.srcObject = null;
+        video.style.display = '';
+    }
     if (state.renderer?.domElement && mainVp) {
         mainVp.appendChild(state.renderer.domElement);
     }
+    // Restore ground / grid / guides before moving renderer back to the main viewport.
+    exitSpatialPreviewEnvironment();
     if (state.scene) {
         if (state.savedSceneBackground !== null && state.savedSceneBackground !== undefined) {
             state.scene.background = state.savedSceneBackground;
@@ -3013,10 +4544,12 @@ function closeSpatialPreview() {
     }
     if (state.renderer) state.renderer.setClearAlpha(1);
     state.spatialPreviewActive = false;
+    state.spatialPreviewKind = null;
     if (overlay) {
         overlay.classList.remove('is-open');
         overlay.setAttribute('aria-hidden', 'true');
     }
+    document.getElementById('void-mobile-preview-share')?.remove();
     onWindowResize();
     updateTransformControlsForViewMode();
     showNotification('Preview closed');
@@ -3145,6 +4678,9 @@ function initializeOnboardingFlow() {
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('🚀 XR Spatial UI Designer Initialized');
+    initializeThemeToggle();
+    initializeLucideIcons();
+    initializePropertySectionIcons();
 
     initializeOnboardingFlow();
 
@@ -3166,6 +4702,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initializeColors();
     initializeScreensUI();
+    initializeEnvironmentsUI();
+    initializePropertySectionIcons();
+    initializeLucideIcons();
+    initializeIPhoneQuickLookEntry();
 
     // 3D viewport + scene: deferred until setAppPhase('editor') — see ensureEditorExperienceInitialized().
 
