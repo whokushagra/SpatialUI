@@ -74,7 +74,14 @@ export class SessionRoom {
         });
     }
 
-    onSocketMessage(_role, _data) {
-        // Relay implementation comes in Task 3.4.
+    onSocketMessage(role, data) {
+        this.lastActivityAt = Date.now();
+        const target = role === 'desktop' ? this.phoneWs : this.desktopWs;
+        if (!target) return;
+        try {
+            target.send(typeof data === 'string' ? data : new Uint8Array(data));
+        } catch {
+            // peer gone; close handler will clean up
+        }
     }
 }

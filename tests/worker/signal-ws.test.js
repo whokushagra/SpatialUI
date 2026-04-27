@@ -37,3 +37,43 @@ describe('WS /api/signal/ws', () => {
         expect(res.status).toBe(404);
     });
 });
+
+async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function pairAndConnect() {
+    const { sessionId, pin } = await newSession();
+    const pinHash = await sha256Hex(`${sessionId}:${pin}`);
+    const claimRes = await SELF.fetch('http://x/api/signal/claim', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId, pinHash })
+    });
+    const { claimToken } = await claimRes.json();
+    const deskRes = await SELF.fetch(`http://x/api/signal/ws?role=desktop&s=${sessionId}`, {
+        headers: { Upgrade: 'websocket' }
+    });
+    const desk = deskRes.webSocket;
+    desk.accept();
+    const phoneRes = await SELF.fetch(`http://x/api/signal/ws?role=phone&s=${sessionId}&t=${claimToken}`, {
+        headers: { Upgrade: 'websocket' }
+    });
+    const phone = phoneRes.webSocket;
+    phone.accept();
+    return { desk, phone };
+}
+
+it('relays messages from desktop to phone', async () => {
+    const { desk, phone } = await pairAndConnect();
+    const got = new Promise((resolve) => phone.addEventListener('message', (e) => resolve(e.data), { once: true }));
+    desk.send(JSON.stringify({ kind: 'offer', sdp: 'v=0...' }));
+    expect(JSON.parse(await got)).toEqual({ kind: 'offer', sdp: 'v=0...' });
+});
+
+it('relays messages from phone to desktop', async () => {
+    const { desk, phone } = await pairAndConnect();
+    const got = new Promise((resolve) => desk.addEventListener('message', (e) => resolve(e.data), { once: true }));
+    phone.send(JSON.stringify({ kind: 'answer', sdp: 'v=0...' }));
+    expect(JSON.parse(await got)).toEqual({ kind: 'answer', sdp: 'v=0...' });
+});
