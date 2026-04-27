@@ -18,6 +18,19 @@
     <div id="phone-root">
         <video id="phone-camera-bg" autoplay playsinline muted></video>
         <canvas id="phone-canvas"></canvas>
+
+        <div id="phone-pin-screen" class="phone-screen">
+            <h1>Enter the PIN shown on the desktop</h1>
+            <div id="phone-pin-display" class="phone-pin-display">- - - -</div>
+            <div id="phone-pin-error" class="phone-pin-error"></div>
+            <div class="phone-pin-keypad">
+                <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+                <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+                <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+                <button data-key="back">⌫</button><button data-key="0">0</button><button data-key="ok" id="phone-pin-ok">OK</button>
+            </div>
+        </div>
+
         <div id="phone-status">phone client booting…</div>
     </div>
     <script type="module" src="/phone.js"></script>

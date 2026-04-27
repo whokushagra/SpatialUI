@@ -1822,3 +1822,12 @@ select:focus-visible {
 .phone-pair-actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px; }
 .phone-pair-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; cursor: pointer; }
 .phone-pair-actions button:hover { background: #334155; }
+
+.phone-screen { position: absolute; inset: 0; background: rgba(15,23,42,0.94); color: #e2e8f0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
+.phone-screen h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; text-align: center; }
+.phone-pin-display { font-size: 40px; letter-spacing: 0.4em; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+.phone-pin-error { color: #f87171; min-height: 18px; font-size: 13px; margin-bottom: 8px; }
+.phone-pin-keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: 10px; }
+.phone-pin-keypad button { width: 72px; height: 72px; border-radius: 12px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 22px; cursor: pointer; }
+.phone-pin-keypad button:active { background: #334155; }
+#phone-pin-ok { background: #4f46e5; }
