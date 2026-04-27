@@ -1831,3 +1831,18 @@ select:focus-visible {
 .phone-pin-keypad button { width: 72px; height: 72px; border-radius: 12px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 22px; cursor: pointer; }
 .phone-pin-keypad button:active { background: #334155; }
 #phone-pin-ok { background: #4f46e5; }
+
+/* ===== PHASE 9: PAIR-MODE VIEWPORT ===== */
+#phone-feed-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; z-index: 5; }
+.phone-feed-hidden { display: none !important; }
+#phone-feed-banner {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+    padding: 8px 12px; background: rgba(15,23,42,0.85); color: #e2e8f0;
+    display: flex; justify-content: space-between; align-items: center;
+    font: 13px/1.4 Inter, system-ui, sans-serif;
+}
+#phone-feed-banner button {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #334155;
+    background: #1e293b; color: #fff; cursor: pointer;
+}
+.viewport-paired #viewport-3d > canvas { visibility: hidden; }
