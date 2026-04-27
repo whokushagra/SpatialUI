@@ -4698,11 +4698,14 @@ function onPhoneVideoTrack(e) {
     video.srcObject = stream;
     video.play().catch(() => {});
 }
+let lastPhoneMode = 'edit';
+
 function onSceneSyncMessage(data) {
     const msg = decodeSceneSync(typeof data === 'string' ? data : new TextDecoder().decode(data));
     if (!msg) return;
     if (msg.t === MSG.READY) sendSnapshotToPhone();
     else if (msg.t === MSG.TAP) handlePhoneTap(msg);
+    else if (msg.t === MSG.MODE) lastPhoneMode = msg.mode;
 }
 
 function sendSnapshotToPhone() {
@@ -4745,6 +4748,13 @@ function handlePhoneTap(msg) {
     const hit = ray.intersectObjects(candidates, false)[0];
     if (!hit) return;
 
+    if (lastPhoneMode === 'play') {
+        const linkTargetId = hit.object.userData?.onClickScreenId;
+        if (linkTargetId) {
+            switchToScreen(linkTargetId);
+            return;
+        }
+    }
     selectObject(hit.object);
     phonePair.peer?.sendSceneSync(encodeSceneSync({ t: MSG.SELECT_ACK, objectId: hit.object.userData.voidId }));
 }
