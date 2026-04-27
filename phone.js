@@ -1,5 +1,5 @@
 import { signalClaim, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
-import { hashPin } from './shared/protocol.js';
+import { hashPin, MSG, encodeSceneSync, decodeSceneSync, SnapshotReassembler } from './shared/protocol.js';
 import { createPeer } from './shared/peer.js';
 import * as THREE from 'three';
 
@@ -100,10 +100,52 @@ async function startPhonePeer(claimToken) {
 
 function onPhonePeerConnected() {
     status.textContent = 'connected';
+    phonePeer.sendSceneSync(encodeSceneSync({
+        t: MSG.READY,
+        platform: /iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'ios' : (/Android/i.test(navigator.userAgent) ? 'android' : 'other'),
+        caps: { webxr: !!navigator.xr, depth: false, hitTest: false }
+    }));
 }
 
-function onPhoneSceneSync(_data) {
-    // Snapshot/delta application wired in Phase 10/11.
+const snapshotReassembler = new SnapshotReassembler();
+const objectsById = new Map();
+
+function onPhoneSceneSync(data) {
+    const msg = decodeSceneSync(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    if (!msg) return;
+    if (msg.t === MSG.SNAPSHOT) applySnapshot(msg);
+    if (msg.t === MSG.SNAPSHOT_CHUNK) {
+        const final = snapshotReassembler.feed(msg);
+        if (final) applySnapshot(final);
+    }
+}
+
+function applySnapshot(msg) {
+    objectsById.forEach((o) => phoneState.threeScene.remove(o));
+    objectsById.clear();
+    for (const item of msg.screen.objects) {
+        const obj = buildObjectFromSnapshot(item);
+        if (obj) {
+            objectsById.set(item.id, obj);
+            phoneState.threeScene.add(obj);
+        }
+    }
+    status.textContent = `screen ${msg.screen.id} (${msg.screen.objects.length})`;
+}
+
+function buildObjectFromSnapshot(item) {
+    let geo;
+    if (item.type === 'sphere') geo = new THREE.SphereGeometry(0.5, 16, 16);
+    else if (item.type === 'plane') geo = new THREE.PlaneGeometry(1, 1);
+    else geo = new THREE.BoxGeometry(1, 1, 1);
+    const color = item.color || '#ffffff';
+    const mat = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.voidId = item.id;
+    if (item.pos) mesh.position.fromArray(item.pos);
+    if (item.rot) mesh.quaternion.fromArray(item.rot);
+    if (item.scale) mesh.scale.fromArray(item.scale);
+    return mesh;
 }
 
 const phoneState = {

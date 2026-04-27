@@ -8,6 +8,8 @@ import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.
 import QRCode from 'qrcode';
 import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 import { createPeer } from './shared/peer.js';
+import { MSG, encodeSceneSync, decodeSceneSync, chunkSnapshot } from './shared/protocol.js';
+import { serializeScreen } from './shared/snapshot.js';
 
 // ===== STABLE ID HELPER =====
 function nextVoidId(prefix = 'obj') {
@@ -4632,8 +4634,20 @@ function onPhoneVideoTrack(e) {
     video.srcObject = stream;
     video.play().catch(() => {});
 }
-function onSceneSyncMessage(_data) {
-    // Wired in Phase 10.
+function onSceneSyncMessage(data) {
+    const msg = decodeSceneSync(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    if (!msg) return;
+    if (msg.t === MSG.READY) sendSnapshotToPhone();
+}
+
+function sendSnapshotToPhone() {
+    const screen = getActiveScreen();
+    if (!screen) return;
+    const screenGroup = screen.group ?? screen;
+    const screenJson = serializeScreen(screenGroup);
+    const fullMsg = { t: MSG.SNAPSHOT, screen: screenJson };
+    const chunks = chunkSnapshot(fullMsg);
+    for (const c of chunks) phonePair.peer?.sendSceneSync(encodeSceneSync(c));
 }
 function onPoseStreamMessage(_buf) {
     // Wired in Phase 12.
