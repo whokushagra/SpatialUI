@@ -4702,6 +4702,7 @@ function onSceneSyncMessage(data) {
     const msg = decodeSceneSync(typeof data === 'string' ? data : new TextDecoder().decode(data));
     if (!msg) return;
     if (msg.t === MSG.READY) sendSnapshotToPhone();
+    else if (msg.t === MSG.TAP) handlePhoneTap(msg);
 }
 
 function sendSnapshotToPhone() {
@@ -4713,6 +4714,37 @@ function sendSnapshotToPhone() {
     const chunks = chunkSnapshot(fullMsg);
     for (const c of chunks) phonePair.peer?.sendSceneSync(encodeSceneSync(c));
 }
+
+function handlePhoneTap(msg) {
+    const screen = getActiveScreen();
+    if (!screen) return;
+    const screenGroup = screen.group ?? screen;
+    const candidates = [];
+    screenGroup.traverse((o) => { if (o.isMesh && o.userData?.voidId) candidates.push(o); });
+    if (candidates.length === 0) return;
+
+    const phoneCam = new THREE.PerspectiveCamera(60, msg.vw / msg.vh, 0.05, 50);
+    phoneCam.position.set(0, 1.5, 0);
+    if (phonePose.kind === POSE_TYPE_ORIENT) {
+        phoneCam.rotation.set(
+            THREE.MathUtils.degToRad(phonePose.beta),
+            THREE.MathUtils.degToRad(phonePose.alpha),
+            -THREE.MathUtils.degToRad(phonePose.gamma),
+            'YXZ'
+        );
+    }
+    phoneCam.updateMatrixWorld(true);
+
+    const ndc = new THREE.Vector2(msg.x * 2 - 1, -(msg.y * 2 - 1));
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, phoneCam);
+    const hit = ray.intersectObjects(candidates, false)[0];
+    if (!hit) return;
+
+    selectObject(hit.object);
+    phonePair.peer?.sendSceneSync(encodeSceneSync({ t: MSG.SELECT_ACK, objectId: hit.object.userData.voidId }));
+}
+
 const phonePose = { kind: null, matrix: null, alpha: 0, beta: 0, gamma: 0, ts: 0 };
 
 function onPoseStreamMessage(buf) {

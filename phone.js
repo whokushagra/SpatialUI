@@ -107,6 +107,7 @@ function onPhonePeerConnected() {
         caps: { webxr: !!navigator.xr, depth: false, hitTest: false }
     }));
     startOrientationLoop();
+    startTapHandler();
 }
 
 const snapshotReassembler = new SnapshotReassembler();
@@ -142,6 +143,9 @@ function onPhoneSceneSync(data) {
         if (deltaApplier) deltaApplier.apply(msg.ops || []);
     } else if (msg.t === MSG.SCREEN_SWITCH) {
         // The desktop will follow up with a fresh SNAPSHOT for the new screen.
+    } else if (msg.t === MSG.SELECT_ACK) {
+        const obj = deltaApplier?.get(msg.objectId);
+        if (obj) flashHighlight(obj);
     }
 }
 
@@ -217,4 +221,23 @@ function startOrientationLoop() {
         const buf = encodeOrientation(e.alpha ?? 0, e.beta ?? 0, e.gamma ?? 0, now);
         phonePeer.sendPoseStream(buf);
     });
+}
+
+function startTapHandler() {
+    document.addEventListener('click', (e) => {
+        const target = e.target;
+        if (target.closest('.phone-pin-keypad') || target.closest('#phone-mode-toggle')) return;
+        const x = e.clientX / window.innerWidth;
+        const y = e.clientY / window.innerHeight;
+        if (!phonePeer) return;
+        phonePeer.sendSceneSync(encodeSceneSync({
+            t: MSG.TAP, x, y, vw: window.innerWidth, vh: window.innerHeight, ts: performance.now()
+        }));
+    });
+}
+
+function flashHighlight(obj) {
+    const helper = new THREE.BoxHelper(obj, 0x22c55e);
+    phoneState.threeScene.add(helper);
+    setTimeout(() => phoneState.threeScene.remove(helper), 1500);
 }
