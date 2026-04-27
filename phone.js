@@ -116,6 +116,7 @@ async function onPhonePeerConnected() {
     }
     startOrientationLoop();
     startTapHandler();
+    startModeToggle();
 }
 
 const snapshotReassembler = new SnapshotReassembler();
@@ -315,5 +316,18 @@ function startXrPoseLoop() {
             phonePeer.sendPoseStream(encodeXrPose(m, performance.now()));
         }
         if (phoneState.xrSession === session) session.requestAnimationFrame(onXrFrame);
+    });
+}
+
+let phoneMode = 'edit';
+
+function startModeToggle() {
+    document.querySelectorAll('#phone-mode-toggle button').forEach((b) => {
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            phoneMode = b.dataset.mode;
+            document.querySelectorAll('#phone-mode-toggle button').forEach((x) => x.classList.toggle('active', x === b));
+            phonePeer?.sendSceneSync(encodeSceneSync({ t: MSG.MODE, mode: phoneMode }));
+        });
     });
 }
