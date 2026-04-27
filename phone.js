@@ -63,6 +63,9 @@ async function submitPin() {
         } else if (result.status === 'gone') {
             setError('Session expired. Re-scan QR from desktop.');
             okBtn.disabled = true;
+        } else if (result.status === 'taken') {
+            setError('This session is already in use. Re-scan QR from desktop.');
+            okBtn.disabled = true;
         }
     } catch (err) {
         console.error(err);

@@ -47,13 +47,20 @@ export class SessionRoom {
             if (pinHash !== expected) {
                 this.pinAttemptsRemaining -= 1;
                 if (this.pinAttemptsRemaining <= 0) {
+                    if (this.desktopWs) {
+                        try { this.desktopWs.send(JSON.stringify({ kind: 'pairing-canceled', reason: 'too-many-attempts' })); } catch {}
+                    }
                     this.sessionId = null;
                     this.plainPin = null;
+                    this.claimToken = null;
                     return new Response('not found', { status: 404 });
                 }
                 return Response.json({ attemptsRemaining: this.pinAttemptsRemaining }, { status: 401 });
             }
-            if (!this.claimToken) this.claimToken = randHex(24);
+            if (this.claimToken) {
+                return Response.json({ error: 'session already in use' }, { status: 403 });
+            }
+            this.claimToken = randHex(24);
             this.lastActivityAt = Date.now();
             if (this.desktopWs) {
                 try { this.desktopWs.send(JSON.stringify({ kind: 'phone-claimed' })); } catch {}

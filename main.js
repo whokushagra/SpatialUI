@@ -4558,6 +4558,7 @@ function openDesktopSignalingWs(sessionId) {
         let msg = null;
         try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.kind === 'phone-claimed') onPhoneClaimed();
+        else if (msg.kind === 'pairing-canceled') onPairingCanceled(msg.reason);
     });
     ws.addEventListener('close', () => {
         if (phonePair.desktopWs === ws) phonePair.desktopWs = null;
@@ -4593,6 +4594,18 @@ function onPhoneClaimed() {
     });
     phonePair.peer = peer;
     peer.startOffer();
+}
+
+function onPairingCanceled(reason) {
+    const status = document.getElementById('phone-pair-status');
+    const message = reason === 'too-many-attempts'
+        ? 'Pairing canceled — too many wrong PINs.'
+        : 'Pairing canceled.';
+    if (status) status.textContent = message;
+    if (phonePair.desktopWs) {
+        try { phonePair.desktopWs.close(); } catch {}
+        phonePair.desktopWs = null;
+    }
 }
 
 function onPhoneVideoTrack(e) {

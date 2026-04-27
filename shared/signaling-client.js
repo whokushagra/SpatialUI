@@ -18,6 +18,7 @@ export async function signalClaim({ sessionId, pinHash, baseUrl = '/api/signal',
         return { status: 'wrong-pin', attemptsRemaining };
     }
     if (res.status === 404) return { status: 'gone' };
+    if (res.status === 403) return { status: 'taken' };
     throw new Error(`signal/claim unexpected status: ${res.status}`);
 }
 

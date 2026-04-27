@@ -50,4 +50,18 @@ describe('POST /api/signal/claim', () => {
         });
         expect(final.status).toBe(404);
     });
+    it('rejects a second claim on an already-claimed session', async () => {
+        const { sessionId, pin } = await newSession();
+        const pinHash = await sha256Hex(`${sessionId}:${pin}`);
+        const first = await SELF.fetch('http://x/api/signal/claim', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId, pinHash })
+        });
+        expect(first.status).toBe(200);
+        const second = await SELF.fetch('http://x/api/signal/claim', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId, pinHash })
+        });
+        expect(second.status).toBe(403);
+    });
 });
