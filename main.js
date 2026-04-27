@@ -304,6 +304,13 @@ function switchToScreen(screenId, opts = {}) {
     refreshScreensPanel();
     refreshLayersPanel();
     if (!silent) showNotification(`Active screen: ${target.name}`);
+    if (state.phonePairMode === 'connected' && phonePair.peer) {
+        phonePair.peer.sendSceneSync(encodeSceneSync({
+            t: MSG.SCREEN_SWITCH,
+            screenId: state.activeScreenId
+        }));
+        sendSnapshotToPhone();
+    }
 }
 
 function renameScreen(screenId, newName) {
@@ -602,6 +609,17 @@ function initialize3DViewport() {
             updatePropertiesFromObject(state.selectedObject);
         }
         scheduleRemoteProjectSave();
+    });
+    state.transformControls.addEventListener('objectChange', () => {
+        const o = state.selectedObject;
+        if (!o?.userData?.voidId) return;
+        emitDelta({
+            op: 'transform',
+            id: o.userData.voidId,
+            pos: [o.position.x, o.position.y, o.position.z],
+            rot: [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w],
+            scale: [o.scale.x, o.scale.y, o.scale.z]
+        });
     });
     state.scene.add(state.transformControls);
 
@@ -1672,6 +1690,15 @@ function createObject(type) {
     }
     mesh.userData.voidId = mesh.userData.voidId || nextVoidId('obj');
     state.objects.push(mesh);
+    emitDelta({
+        op: 'create',
+        id: mesh.userData.voidId,
+        type: mesh.userData.voidType ?? 'box',
+        pos: [mesh.position.x, mesh.position.y, mesh.position.z],
+        rot: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
+        scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+        color: mesh.material?.color ? '#' + mesh.material.color.getHexString() : null
+    });
     state.selectableObjects.push(mesh);
     selectObject(mesh);
     refreshLayersPanel();
@@ -2000,6 +2027,7 @@ function disposeObject3D(object) {
 
 function deleteSelectedObject() {
     if (!state.selectedObject) return;
+    const __deletedVoidId = state.selectedObject?.userData?.voidId;
 
     const target = state.selectedObject;
     const name = target.name;
@@ -2041,6 +2069,7 @@ function deleteSelectedObject() {
     refreshLayersPanel();
 
     showNotification(`Deleted: ${name}`);
+    if (__deletedVoidId) emitDelta({ op: 'delete', id: __deletedVoidId });
 }
 
 // ===== TRANSFORM MODE =====
@@ -4590,6 +4619,41 @@ const phonePair = {
     abortController: null
 };
 
+const deltaQueue = new Map(); // key → latest op (transform/update merging)
+let deltaFlushTimer = null;
+
+function emitDelta(op) {
+    if (state.phonePairMode !== 'connected' || !phonePair.peer) return;
+    if (op.op === 'transform' || op.op === 'update') {
+        const key = `${op.op}:${op.id}`;
+        const existing = deltaQueue.get(key);
+        if (existing && op.op === 'update') {
+            existing.props = { ...existing.props, ...op.props };
+        } else {
+            deltaQueue.set(key, op);
+        }
+        if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltaQueue, 16);
+    } else {
+        if (deltaFlushTimer) { clearTimeout(deltaFlushTimer); deltaFlushTimer = null; }
+        const ops = Array.from(deltaQueue.values()).concat([op]);
+        deltaQueue.clear();
+        sendDeltaBatch(ops);
+    }
+}
+
+function flushDeltaQueue() {
+    deltaFlushTimer = null;
+    if (deltaQueue.size === 0) return;
+    const ops = Array.from(deltaQueue.values());
+    deltaQueue.clear();
+    sendDeltaBatch(ops);
+}
+
+function sendDeltaBatch(ops) {
+    if (!phonePair.peer) return;
+    phonePair.peer.sendSceneSync(encodeSceneSync({ t: MSG.DELTA, ops }));
+}
+
 function openDesktopSignalingWs(sessionId) {
     const ws = openSignalingSocket({ sessionId, role: 'desktop', baseWsUrl: inferWsBase() });
     phonePair.desktopWs = ws;
@@ -4915,11 +4979,15 @@ function initializeAppearanceControls() {
         colorInput.addEventListener('input', (e) => {
             const color = e.target.value;
             colorHexDisplay.textContent = color;
-            
+
             const m = state.selectedObject && getPrimaryMesh(state.selectedObject);
             if (m && m.material) {
                 m.material.color.set(color);
                 showNotification(`Color: ${color}`);
+            }
+            const __colorTarget = state.selectedObject && getPrimaryMesh(state.selectedObject);
+            if (__colorTarget?.userData?.voidId) {
+                emitDelta({ op: 'update', id: __colorTarget.userData.voidId, props: { color } });
             }
         });
     }
