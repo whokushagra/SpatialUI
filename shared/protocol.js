@@ -107,3 +107,9 @@ export class SnapshotReassembler {
         }
     }
 }
+
+export async function hashPin(sessionId, pin) {
+    const msg = new TextEncoder().encode(`${sessionId}:${pin}`);
+    const hash = await crypto.subtle.digest('SHA-256', msg);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}

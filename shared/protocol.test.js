@@ -92,3 +92,19 @@ describe('snapshot chunking', () => {
         expect(chunks[0].t).toBe(MSG.SNAPSHOT);
     });
 });
+
+import { hashPin } from './protocol.js';
+
+describe('hashPin', () => {
+    it('produces a stable hex SHA-256 over sessionId + pin', async () => {
+        const a = await hashPin('abc', '1234');
+        const b = await hashPin('abc', '1234');
+        expect(a).toBe(b);
+        expect(a).toMatch(/^[0-9a-f]{64}$/);
+    });
+    it('differs across different inputs', async () => {
+        const a = await hashPin('abc', '1234');
+        const b = await hashPin('abc', '1235');
+        expect(a).not.toBe(b);
+    });
+});
