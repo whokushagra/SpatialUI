@@ -48,6 +48,33 @@ export class SessionRoom {
             this.lastActivityAt = Date.now();
             return Response.json({ claimToken: this.claimToken });
         }
+        if (url.pathname === '/ws') {
+            if (!this.sessionId) return new Response('not found', { status: 404 });
+            const role = url.searchParams.get('role');
+            const claimToken = url.searchParams.get('t');
+            if (role === 'phone' && claimToken !== this.claimToken) {
+                return new Response('forbidden', { status: 403 });
+            }
+            const pair = new WebSocketPair();
+            const [client, server] = Object.values(pair);
+            server.accept();
+            this.attachSocket(server, role);
+            return new Response(null, { status: 101, webSocket: client });
+        }
         return new Response('not found', { status: 404 });
+    }
+
+    attachSocket(ws, role) {
+        if (role === 'desktop') this.desktopWs = ws;
+        if (role === 'phone') this.phoneWs = ws;
+        ws.addEventListener('message', (e) => this.onSocketMessage(role, e.data));
+        ws.addEventListener('close', () => {
+            if (role === 'desktop' && this.desktopWs === ws) this.desktopWs = null;
+            if (role === 'phone' && this.phoneWs === ws) this.phoneWs = null;
+        });
+    }
+
+    onSocketMessage(_role, _data) {
+        // Relay implementation comes in Task 3.4.
     }
 }

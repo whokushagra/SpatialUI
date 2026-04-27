@@ -35,11 +35,24 @@ async function handleSignalClaim(request, env) {
     });
 }
 
+async function handleSignalWs(request, env) {
+    const url = new URL(request.url);
+    const role = url.searchParams.get('role');
+    const sessionId = url.searchParams.get('s');
+    const claimToken = url.searchParams.get('t') || null;
+    if (role !== 'desktop' && role !== 'phone') return new Response('bad role', { status: 400 });
+    if (!sessionId) return new Response('missing session', { status: 400 });
+    const id = env.SESSION_ROOM.idFromName(sessionId);
+    const stub = env.SESSION_ROOM.get(id);
+    return stub.fetch(`http://room/ws?role=${role}&t=${claimToken ?? ''}`, request);
+}
+
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
         if (url.pathname === '/api/signal/new') return handleSignalNew(request, env);
         if (url.pathname === '/api/signal/claim') return handleSignalClaim(request, env);
+        if (url.pathname === '/api/signal/ws') return handleSignalWs(request, env);
         return new Response('not found', { status: 404 });
     }
 };
