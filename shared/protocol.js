@@ -12,3 +12,17 @@ export const MSG = Object.freeze({
     SCREEN_SWITCH: 'screen-switch',
     SELECT_ACK: 'select-ack'
 });
+
+export function encodeSceneSync(message) {
+    return JSON.stringify(message);
+}
+
+export function decodeSceneSync(wire) {
+    try {
+        const parsed = JSON.parse(wire);
+        if (!parsed || typeof parsed.t !== 'string') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
