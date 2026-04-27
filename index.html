@@ -764,6 +764,22 @@
     </div>
 
     <script type="module" src="main.js"></script>
+
+    <div id="phone-pair-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="phone-pair-title">
+        <div class="phone-pair-card">
+            <h2 id="phone-pair-title">Pair phone for live preview</h2>
+            <p class="phone-pair-sub">Scan this QR with your phone, then enter the PIN.</p>
+            <canvas id="phone-pair-qr" width="240" height="240"></canvas>
+            <div class="phone-pair-pin">
+                <span class="phone-pair-pin-label">PIN</span>
+                <span id="phone-pair-pin-value" class="phone-pair-pin-value">----</span>
+            </div>
+            <div class="phone-pair-status" id="phone-pair-status">Waiting for phone…</div>
+            <div class="phone-pair-actions">
+                <button id="phone-pair-cancel" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>
