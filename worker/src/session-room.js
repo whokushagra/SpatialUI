@@ -21,6 +21,8 @@ export class SessionRoom {
         this.lastActivityAt = Date.now();
         this.desktopWs = null;
         this.phoneWs = null;
+        this.pendingForDesktop = [];
+        this.pendingForPhone = [];
     }
     async fetch(request) {
         const url = new URL(request.url);
@@ -84,8 +86,14 @@ export class SessionRoom {
     }
 
     attachSocket(ws, role) {
-        if (role === 'desktop') this.desktopWs = ws;
-        if (role === 'phone') this.phoneWs = ws;
+        if (role === 'desktop') {
+            this.desktopWs = ws;
+            this.flushPending(this.pendingForDesktop, ws);
+        }
+        if (role === 'phone') {
+            this.phoneWs = ws;
+            this.flushPending(this.pendingForPhone, ws);
+        }
         ws.addEventListener('message', (e) => this.onSocketMessage(role, e.data));
         ws.addEventListener('close', () => {
             if (role === 'desktop' && this.desktopWs === ws) this.desktopWs = null;
@@ -93,14 +101,22 @@ export class SessionRoom {
         });
     }
 
+    flushPending(queue, ws) {
+        while (queue.length) {
+            const msg = queue.shift();
+            try { ws.send(msg); } catch { /* peer gone again, drop */ }
+        }
+    }
+
     onSocketMessage(role, data) {
         this.lastActivityAt = Date.now();
         const target = role === 'desktop' ? this.phoneWs : this.desktopWs;
-        if (!target) return;
-        try {
-            target.send(typeof data === 'string' ? data : new Uint8Array(data));
-        } catch {
-            // peer gone; close handler will clean up
+        const queue = role === 'desktop' ? this.pendingForPhone : this.pendingForDesktop;
+        const payload = typeof data === 'string' ? data : new Uint8Array(data);
+        if (target) {
+            try { target.send(payload); return; } catch { /* fall through to queue */ }
         }
+        // Buffer until peer connects (or reconnects). Cap to avoid runaway memory.
+        if (queue.length < 64) queue.push(payload);
     }
 }
