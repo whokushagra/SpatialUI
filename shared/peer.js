@@ -8,6 +8,11 @@ export function createPeer({ role, signalingWs, onTrack, onSceneSync, onPoseStre
     let poseStream = null;
 
     if (role === 'desktop') {
+        // Pre-declare a video receive slot so the offer SDP includes a video m-section.
+        // Without this, the phone's addTrack on the answer side has no matching m-line —
+        // the answer can't introduce media not in the offer, so video silently drops out
+        // of negotiation. Connection succeeds via data channels but onTrack never fires.
+        pc.addTransceiver('video', { direction: 'recvonly' });
         sceneSync = pc.createDataChannel('scene-sync', { ordered: true });
         poseStream = pc.createDataChannel('pose-stream', { ordered: false, maxRetransmits: 0 });
         wireChannel(sceneSync, 'scene-sync');
