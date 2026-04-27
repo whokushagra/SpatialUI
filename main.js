@@ -4619,6 +4619,13 @@ const phonePair = {
     abortController: null
 };
 
+function showFailureBanner(text) {
+    const banner = document.getElementById('phone-feed-banner');
+    if (!banner) return;
+    const span = banner.querySelector('span');
+    if (span) span.textContent = text;
+}
+
 const deltaQueue = new Map(); // key → latest op (transform/update merging)
 let deltaFlushTimer = null;
 
@@ -4684,7 +4691,14 @@ function onPhoneClaimed() {
         onState: (s) => {
             if (status) status.textContent = `WebRTC: ${s}`;
             if (s === 'connected') onPeerConnected();
-            if (s === 'failed' || s === 'disconnected' || s === 'closed') onPeerDisconnected();
+            else if (s === 'failed') {
+                showFailureBanner('Couldn\'t establish a direct connection — your network may block peer-to-peer.');
+                exitPairMode();
+            } else if (s === 'disconnected') {
+                showFailureBanner('Phone disconnected — waiting to reconnect…');
+            } else if (s === 'closed') {
+                exitPairMode();
+            }
         }
     });
     phonePair.peer = peer;
