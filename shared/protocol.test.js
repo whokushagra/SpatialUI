@@ -64,3 +64,31 @@ describe('pose-stream codec', () => {
         expect(decodePose(buf)).toBeNull();
     });
 });
+
+import { chunkSnapshot, SnapshotReassembler } from './protocol.js';
+
+describe('snapshot chunking', () => {
+    it('chunks a large snapshot and reassembles', () => {
+        const big = { t: MSG.SNAPSHOT, screen: { id: 's1', objects: 'x'.repeat(40000) } };
+        const chunks = chunkSnapshot(big, 8000);
+        expect(chunks.length).toBeGreaterThan(1);
+        chunks.forEach((c, i) => {
+            expect(c.t).toBe(MSG.SNAPSHOT_CHUNK);
+            expect(c.i).toBe(i);
+            expect(c.n).toBe(chunks.length);
+        });
+        const reasm = new SnapshotReassembler();
+        let final = null;
+        for (const c of chunks) {
+            const r = reasm.feed(c);
+            if (r) final = r;
+        }
+        expect(final).toEqual(big);
+    });
+    it('returns the message unchunked when small enough', () => {
+        const small = { t: MSG.SNAPSHOT, screen: { id: 's1' } };
+        const chunks = chunkSnapshot(small, 8000);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0].t).toBe(MSG.SNAPSHOT);
+    });
+});

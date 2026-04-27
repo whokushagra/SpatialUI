@@ -73,3 +73,37 @@ export function decodePose(buf) {
     }
     return null;
 }
+
+export function chunkSnapshot(message, maxBytes = 14000) {
+    const wire = JSON.stringify(message);
+    if (wire.length <= maxBytes) return [message];
+    const parts = [];
+    for (let off = 0; off < wire.length; off += maxBytes) {
+        parts.push(wire.slice(off, off + maxBytes));
+    }
+    return parts.map((data, i) => ({ t: MSG.SNAPSHOT_CHUNK, i, n: parts.length, data }));
+}
+
+export class SnapshotReassembler {
+    constructor() {
+        this.parts = [];
+        this.expected = 0;
+    }
+    feed(chunk) {
+        if (chunk.t !== MSG.SNAPSHOT_CHUNK) return null;
+        if (this.expected === 0) {
+            this.expected = chunk.n;
+            this.parts = new Array(chunk.n);
+        }
+        this.parts[chunk.i] = chunk.data;
+        if (this.parts.filter(Boolean).length !== this.expected) return null;
+        const wire = this.parts.join('');
+        this.parts = [];
+        this.expected = 0;
+        try {
+            return JSON.parse(wire);
+        } catch {
+            return null;
+        }
+    }
+}
