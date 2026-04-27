@@ -194,7 +194,15 @@ async function startPhoneCameraAndComposite() {
         video.srcObject = phoneState.cameraStream;
         await video.play();
     } catch (err) {
-        status.textContent = `camera: ${err.message}`;
+        const overlay = document.createElement('div');
+        overlay.className = 'phone-screen';
+        overlay.innerHTML = `
+            <h1>Camera access required</h1>
+            <p style="color:#94a3b8;text-align:center;max-width:280px;margin:6px 0 16px;">${err.name === 'NotAllowedError' ? 'You denied camera access. Tap below to retry.' : err.message}</p>
+            <button id="phone-camera-retry" style="padding:10px 20px;border-radius:8px;border:1px solid #334155;background:#4f46e5;color:#fff;cursor:pointer;">Retry</button>
+        `;
+        document.getElementById('phone-root').appendChild(overlay);
+        overlay.querySelector('#phone-camera-retry').addEventListener('click', () => location.reload());
         throw err;
     }
 
