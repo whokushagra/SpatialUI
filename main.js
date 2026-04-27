@@ -5,6 +5,8 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
+import QRCode from 'qrcode';
+import { signalNew } from './shared/signaling-client.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -4478,14 +4480,16 @@ async function openSpatialPreview() {
 
         state.spatialPreviewKind = 'camera';
         if (video) video.style.display = '';
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            },
-            audio: false
-        });
+        const videoConstraints = isMobileDevice
+            ? { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+            : { width: { ideal: 1280 }, height: { ideal: 720 } };
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        } catch (primaryErr) {
+            console.warn('[spatialPreview] primary getUserMedia failed, retrying with default video', primaryErr);
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
         video.srcObject = stream;
         state.spatialPreviewStream = stream;
         await video.play().catch(() => {});
@@ -4508,7 +4512,9 @@ async function openSpatialPreview() {
         updateTransformControlsForViewMode();
     } catch (err) {
         state.spatialPreviewKind = null;
-        showNotification(`Camera unavailable: ${err?.message || 'Permission denied'}`);
+        console.error('[spatialPreview] camera error', err);
+        const reason = err?.name ? `${err.name}: ${err.message || ''}`.trim() : (err?.message || 'Permission denied');
+        showNotification(`Camera unavailable — ${reason}`);
     }
 }
 
@@ -4555,12 +4561,61 @@ function closeSpatialPreview() {
     showNotification('Preview closed');
 }
 
+const phonePair = {
+    sessionId: null,
+    pin: null,
+    desktopWs: null,
+    abortController: null
+};
+
+function openPhonePairing() {
+    const modal = document.getElementById('phone-pair-modal');
+    const qrCanvas = document.getElementById('phone-pair-qr');
+    const pinValue = document.getElementById('phone-pair-pin-value');
+    const status = document.getElementById('phone-pair-status');
+    if (!modal || !qrCanvas || !pinValue || !status) return;
+
+    modal.classList.remove('hidden');
+    pinValue.textContent = '----';
+    status.textContent = 'Minting session…';
+
+    signalNew()
+        .then(({ sessionId, pin }) => {
+            phonePair.sessionId = sessionId;
+            phonePair.pin = pin;
+            const phoneUrl = `${window.location.origin}/phone.html#s=${sessionId}`;
+            window.__voidLastPhoneUrl = phoneUrl;
+            return QRCode.toCanvas(qrCanvas, phoneUrl, { width: 240, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+                .then(() => {
+                    pinValue.textContent = pin;
+                    status.textContent = 'Waiting for phone…';
+                });
+        })
+        .catch((err) => {
+            console.error('[phonePair] signalNew failed', err);
+            status.textContent = 'Could not reach pairing server.';
+        });
+}
+
+function closePhonePairing() {
+    const modal = document.getElementById('phone-pair-modal');
+    if (modal) modal.classList.add('hidden');
+    if (phonePair.desktopWs) {
+        try { phonePair.desktopWs.close(); } catch {}
+        phonePair.desktopWs = null;
+    }
+    phonePair.sessionId = null;
+    phonePair.pin = null;
+}
+
 function initializeEditorModeAndSpatialPreview() {
     document.getElementById('btn-mode-design')?.addEventListener('click', () => setEditorMode('design'));
     document.getElementById('btn-mode-prototype')?.addEventListener('click', () => setEditorMode('prototype'));
     document.getElementById('btn-exit-prototype')?.addEventListener('click', () => setEditorMode('design'));
     document.getElementById('btn-spatial-preview')?.addEventListener('click', () => openSpatialPreview());
     document.getElementById('spatial-preview-close')?.addEventListener('click', () => closeSpatialPreview());
+    document.getElementById('btn-phone-pair')?.addEventListener('click', () => openPhonePairing());
+    document.getElementById('phone-pair-cancel')?.addEventListener('click', () => closePhonePairing());
 }
 
 // ===== INITIALIZE APPLICATION =====
