@@ -24,8 +24,17 @@ export function createPeer({ role, signalingWs, onTrack, onSceneSync, onPoseStre
         });
     }
 
+    const pendingSceneSync = [];
+    const pendingPoseStream = [];
+
     function wireChannel(ch, label) {
         ch.binaryType = 'arraybuffer';
+        ch.addEventListener('open', () => {
+            const queue = label === 'scene-sync' ? pendingSceneSync : pendingPoseStream;
+            while (queue.length) {
+                try { ch.send(queue.shift()); } catch { break; }
+            }
+        });
         ch.addEventListener('message', (e) => {
             if (label === 'scene-sync') onSceneSync?.(e.data);
             else onPoseStream?.(e.data);
@@ -61,10 +70,12 @@ export function createPeer({ role, signalingWs, onTrack, onSceneSync, onPoseStre
 
     function sendSceneSync(data) {
         if (sceneSync && sceneSync.readyState === 'open') sceneSync.send(data);
+        else pendingSceneSync.push(data);
     }
 
     function sendPoseStream(buf) {
         if (poseStream && poseStream.readyState === 'open') poseStream.send(buf);
+        else pendingPoseStream.push(buf);
     }
 
     function close() {
