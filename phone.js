@@ -1,5 +1,5 @@
 import { signalClaim, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
-import { hashPin, MSG, encodeSceneSync, decodeSceneSync, SnapshotReassembler, encodeOrientation } from './shared/protocol.js';
+import { hashPin, MSG, encodeSceneSync, decodeSceneSync, SnapshotReassembler, encodeOrientation, encodeXrPose } from './shared/protocol.js';
 import { createPeer } from './shared/peer.js';
 import { DeltaApplier } from './shared/delta-applier.js';
 import * as THREE from 'three';
@@ -99,13 +99,21 @@ async function startPhonePeer(claimToken) {
     compositeStream.getVideoTracks().forEach((t) => phonePeer.pc.addTrack(t, compositeStream));
 }
 
-function onPhonePeerConnected() {
+async function onPhonePeerConnected() {
     status.textContent = 'connected';
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    let xrSupported = false;
+    if (isAndroid && navigator.xr) {
+        try { xrSupported = await navigator.xr.isSessionSupported('immersive-ar'); } catch { xrSupported = false; }
+    }
     phonePeer.sendSceneSync(encodeSceneSync({
         t: MSG.READY,
-        platform: /iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'ios' : (/Android/i.test(navigator.userAgent) ? 'android' : 'other'),
-        caps: { webxr: !!navigator.xr, depth: false, hitTest: false }
+        platform: isAndroid ? 'android' : (/iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'ios' : 'other'),
+        caps: { webxr: xrSupported, depth: false, hitTest: xrSupported }
     }));
+    if (xrSupported) {
+        await startWebXrMode();
+    }
     startOrientationLoop();
     startTapHandler();
 }
@@ -161,7 +169,10 @@ const phoneState = {
     threeScene: null,
     threeCamera: null,
     composite: { canvas: null, stream: null },
-    snapshotRoot: null
+    snapshotRoot: null,
+    xrSession: null,
+    xrRefSpace: null,
+    xrHitTest: null
 };
 
 async function startPhoneCameraAndComposite() {
@@ -272,4 +283,37 @@ function startCameraOrientationLoop() {
         requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+}
+
+async function startWebXrMode() {
+    try {
+        const session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['depth-sensing']
+        });
+        phoneState.xrSession = session;
+        await phoneState.threeRenderer.xr.setSession(session);
+        phoneState.threeRenderer.xr.enabled = true;
+        const refSpace = await session.requestReferenceSpace('local');
+        phoneState.xrRefSpace = refSpace;
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        phoneState.xrHitTest = await session.requestHitTestSource({ space: viewerSpace });
+        startXrPoseLoop();
+    } catch (err) {
+        status.textContent = `WebXR failed: ${err.message}`;
+    }
+}
+
+function startXrPoseLoop() {
+    const session = phoneState.xrSession;
+    if (!session) return;
+    session.requestAnimationFrame(function onXrFrame(_t, frame) {
+        const refSpace = phoneState.xrRefSpace;
+        const viewerPose = frame.getViewerPose(refSpace);
+        if (viewerPose && phonePeer) {
+            const m = new Float32Array(viewerPose.transform.matrix);
+            phonePeer.sendPoseStream(encodeXrPose(m, performance.now()));
+        }
+        if (phoneState.xrSession === session) session.requestAnimationFrame(onXrFrame);
+    });
 }
