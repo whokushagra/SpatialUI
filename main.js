@@ -4724,8 +4724,12 @@ function handlePhoneTap(msg) {
     if (candidates.length === 0) return;
 
     const phoneCam = new THREE.PerspectiveCamera(60, msg.vw / msg.vh, 0.05, 50);
-    phoneCam.position.set(0, 1.5, 0);
-    if (phonePose.kind === POSE_TYPE_ORIENT) {
+    if (phonePose.kind === POSE_TYPE_XR && phonePose.matrix) {
+        phoneCam.matrix.fromArray(phonePose.matrix);
+        phoneCam.matrixAutoUpdate = false;
+        phoneCam.matrixWorldNeedsUpdate = true;
+    } else {
+        phoneCam.position.set(0, 1.5, 0);
         phoneCam.rotation.set(
             THREE.MathUtils.degToRad(phonePose.beta),
             THREE.MathUtils.degToRad(phonePose.alpha),
