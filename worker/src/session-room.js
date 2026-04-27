@@ -33,6 +33,15 @@ export class SessionRoom {
         }
         if (url.pathname === '/claim' && request.method === 'POST') {
             if (!this.sessionId) return new Response('not found', { status: 404 });
+            const idleMs = Date.now() - this.lastActivityAt;
+            const claimed = !!this.claimToken;
+            const ttl = claimed ? 10 * 60 * 1000 : 5 * 60 * 1000;
+            if (idleMs > ttl) {
+                this.sessionId = null;
+                this.plainPin = null;
+                this.claimToken = null;
+                return new Response('not found', { status: 404 });
+            }
             const { pinHash } = await request.json();
             const expected = await sha256Hex(`${this.sessionId}:${this.plainPin}`);
             if (pinHash !== expected) {
