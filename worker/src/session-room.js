@@ -1,3 +1,13 @@
+function randHex(bytes) {
+    const arr = crypto.getRandomValues(new Uint8Array(bytes));
+    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 export class SessionRoom {
     constructor(state, env) {
         this.state = state;
@@ -20,6 +30,23 @@ export class SessionRoom {
             this.plainPin = pin;
             this.lastActivityAt = Date.now();
             return new Response('ok');
+        }
+        if (url.pathname === '/claim' && request.method === 'POST') {
+            if (!this.sessionId) return new Response('not found', { status: 404 });
+            const { pinHash } = await request.json();
+            const expected = await sha256Hex(`${this.sessionId}:${this.plainPin}`);
+            if (pinHash !== expected) {
+                this.pinAttemptsRemaining -= 1;
+                if (this.pinAttemptsRemaining <= 0) {
+                    this.sessionId = null;
+                    this.plainPin = null;
+                    return new Response('not found', { status: 404 });
+                }
+                return Response.json({ attemptsRemaining: this.pinAttemptsRemaining }, { status: 401 });
+            }
+            if (!this.claimToken) this.claimToken = randHex(24);
+            this.lastActivityAt = Date.now();
+            return Response.json({ claimToken: this.claimToken });
         }
         return new Response('not found', { status: 404 });
     }
