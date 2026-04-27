@@ -156,7 +156,15 @@ function applySnapshot(msg) {
     // park the centroid 1.5m ahead of the camera at eye level.
     autoFrameSnapshot(root);
 
-    status.textContent = `screen ${msg.screen.id} (${msg.screen.objects.length})`;
+    const box = new THREE.Box3().setFromObject(root);
+    const c = new THREE.Vector3(); const s = new THREE.Vector3();
+    box.getCenter(c); box.getSize(s);
+    status.textContent =
+        `screen ${msg.screen.id}\n` +
+        `objects: ${msg.screen.objects.length} (applier holds ${deltaApplier.byId.size})\n` +
+        `bbox center: ${c.x.toFixed(2)}, ${c.y.toFixed(2)}, ${c.z.toFixed(2)}\n` +
+        `bbox size: ${s.x.toFixed(2)}, ${s.y.toFixed(2)}, ${s.z.toFixed(2)}\n` +
+        `cam pos: ${phoneState.threeCamera.position.x.toFixed(2)}, ${phoneState.threeCamera.position.y.toFixed(2)}, ${phoneState.threeCamera.position.z.toFixed(2)}`;
 }
 
 function autoFrameSnapshot(root) {
