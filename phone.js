@@ -136,8 +136,6 @@ function applySnapshot(msg) {
         phoneState.threeScene.remove(phoneState.snapshotRoot);
     }
     const root = new THREE.Group();
-    root.position.set(0, 0, -1.5);
-    root.scale.setScalar(0.5);
     phoneState.threeScene.add(root);
     phoneState.snapshotRoot = root;
 
@@ -152,7 +150,38 @@ function applySnapshot(msg) {
         color: item.color
     }));
     deltaApplier.apply(ops);
+
+    // Auto-frame the snapshot in front of the phone camera. Editor-world coordinates can be
+    // anywhere; we measure the assembled bounding box, scale to ~1m largest dimension, and
+    // park the centroid 1.5m ahead of the camera at eye level.
+    autoFrameSnapshot(root);
+
     status.textContent = `screen ${msg.screen.id} (${msg.screen.objects.length})`;
+}
+
+function autoFrameSnapshot(root) {
+    const cam = phoneState.threeCamera;
+    if (!cam) return;
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    if (box.isEmpty()) return;
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+    const targetSize = 1.0;
+    const fit = targetSize / maxDim;
+    root.scale.setScalar(fit);
+    // Centroid in world after scaling lands at center * fit relative to current root pos (0,0,0).
+    // We want the scaled centroid at camPos + camForward * 1.5.
+    const camPos = cam.position.clone();
+    const targetWorld = camPos.clone().add(new THREE.Vector3(0, 0, -1.5));
+    root.position.set(
+        targetWorld.x - center.x * fit,
+        targetWorld.y - center.y * fit,
+        targetWorld.z - center.z * fit
+    );
 }
 
 function onPhoneSceneSync(data) {
