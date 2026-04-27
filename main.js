@@ -4607,8 +4607,12 @@ function onPhoneClaimed() {
     peer.startOffer();
 }
 
-function onPhoneVideoTrack(_e) {
-    // Wired in Task 9.2.
+function onPhoneVideoTrack(e) {
+    const video = document.getElementById('phone-feed-video');
+    if (!video) return;
+    const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
+    video.srcObject = stream;
+    video.play().catch(() => {});
 }
 function onSceneSyncMessage(_data) {
     // Wired in Phase 10.
@@ -4626,11 +4630,20 @@ function onPeerDisconnected() {
 }
 function enterPairMode() {
     state.phonePairMode = 'connected';
-    // Viewport swap wired in Task 9.2.
+    document.getElementById('phone-feed-video')?.classList.remove('phone-feed-hidden');
+    document.getElementById('phone-feed-banner')?.classList.remove('phone-feed-hidden');
+    document.body.classList.add('viewport-paired');
 }
+
 function exitPairMode() {
     state.phonePairMode = false;
-    if (phonePair.peer) { phonePair.peer.close(); phonePair.peer = null; }
+    document.getElementById('phone-feed-video')?.classList.add('phone-feed-hidden');
+    document.getElementById('phone-feed-banner')?.classList.add('phone-feed-hidden');
+    document.body.classList.remove('viewport-paired');
+    if (phonePair.peer) { try { phonePair.peer.close(); } catch {} phonePair.peer = null; }
+    if (phonePair.desktopWs) { try { phonePair.desktopWs.close(); } catch {} phonePair.desktopWs = null; }
+    const v = document.getElementById('phone-feed-video');
+    if (v) { v.srcObject = null; }
 }
 
 function openPhonePairing() {
@@ -4682,6 +4695,7 @@ function initializeEditorModeAndSpatialPreview() {
     document.getElementById('spatial-preview-close')?.addEventListener('click', () => closeSpatialPreview());
     document.getElementById('btn-phone-pair')?.addEventListener('click', () => openPhonePairing());
     document.getElementById('phone-pair-cancel')?.addEventListener('click', () => closePhonePairing());
+    document.getElementById('phone-feed-disconnect')?.addEventListener('click', () => exitPairMode());
 }
 
 // ===== INITIALIZE APPLICATION =====
