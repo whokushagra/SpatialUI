@@ -8,7 +8,7 @@ import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.
 import QRCode from 'qrcode';
 import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 import { createPeer } from './shared/peer.js';
-import { MSG, encodeSceneSync, decodeSceneSync, chunkSnapshot } from './shared/protocol.js';
+import { MSG, encodeSceneSync, decodeSceneSync, chunkSnapshot, decodePose, POSE_TYPE_XR, POSE_TYPE_ORIENT } from './shared/protocol.js';
 import { serializeScreen } from './shared/snapshot.js';
 
 // ===== STABLE ID HELPER =====
@@ -4713,8 +4713,15 @@ function sendSnapshotToPhone() {
     const chunks = chunkSnapshot(fullMsg);
     for (const c of chunks) phonePair.peer?.sendSceneSync(encodeSceneSync(c));
 }
-function onPoseStreamMessage(_buf) {
-    // Wired in Phase 12.
+const phonePose = { kind: null, matrix: null, alpha: 0, beta: 0, gamma: 0, ts: 0 };
+
+function onPoseStreamMessage(buf) {
+    const p = decodePose(buf);
+    if (!p) return;
+    phonePose.kind = p.kind;
+    phonePose.ts = p.ts;
+    if (p.kind === POSE_TYPE_XR) phonePose.matrix = p.matrix;
+    else { phonePose.alpha = p.alpha; phonePose.beta = p.beta; phonePose.gamma = p.gamma; }
 }
 function onPeerConnected() {
     const modal = document.getElementById('phone-pair-modal');
