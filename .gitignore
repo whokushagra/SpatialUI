@@ -4,3 +4,7 @@ dist/
 *.backup
 .env
 .env.local
+.wrangler/
+playwright-report/
+test-results/
+.dev.vars
