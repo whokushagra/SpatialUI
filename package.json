@@ -3,16 +3,29 @@
   "version": "0.1.0",
   "description": "Void - Designer-First XR UI Platform",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n vite,worker -c blue,magenta \"vite\" \"wrangler dev --local --port 8787 --config worker/wrangler.toml\"",
+    "dev:tunnel": "concurrently -n vite,worker,tunnel \"vite\" \"wrangler dev --local --port 8787 --config worker/wrangler.toml\" \"cloudflared tunnel --url http://localhost:8000\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:pages": "vite build && wrangler pages deploy dist/ --project-name=void",
+    "deploy:worker": "wrangler deploy --config worker/wrangler.toml",
+    "deploy": "npm run deploy:worker && npm run deploy:pages",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
+    "qrcode": "^1.5.4",
     "three": "^0.160.0"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@playwright/test": "^1.47.0",
+    "concurrently": "^9.0.0",
     "vite": "^5.0.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.78.0",
     "xlsx": "^0.18.5"
   }
 }
