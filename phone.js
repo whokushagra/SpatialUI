@@ -1,5 +1,5 @@
 import { signalClaim, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
-import { hashPin, MSG, encodeSceneSync, decodeSceneSync, SnapshotReassembler } from './shared/protocol.js';
+import { hashPin, MSG, encodeSceneSync, decodeSceneSync, SnapshotReassembler, encodeOrientation } from './shared/protocol.js';
 import { createPeer } from './shared/peer.js';
 import { DeltaApplier } from './shared/delta-applier.js';
 import * as THREE from 'three';
@@ -106,6 +106,7 @@ function onPhonePeerConnected() {
         platform: /iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'ios' : (/Android/i.test(navigator.userAgent) ? 'android' : 'other'),
         caps: { webxr: !!navigator.xr, depth: false, hitTest: false }
     }));
+    startOrientationLoop();
 }
 
 const snapshotReassembler = new SnapshotReassembler();
@@ -169,6 +170,10 @@ async function startPhoneCameraAndComposite() {
         throw err;
     }
 
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try { await DeviceOrientationEvent.requestPermission(); } catch {}
+    }
+
     phoneState.threeRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     phoneState.threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     phoneState.threeRenderer.setSize(canvas.width, canvas.height, false);
@@ -200,4 +205,16 @@ async function startPhoneCameraAndComposite() {
     phoneState.composite.canvas = composite;
     phoneState.composite.stream = composite.captureStream(30);
     return phoneState.composite.stream;
+}
+
+let lastOrientationSend = 0;
+function startOrientationLoop() {
+    window.addEventListener('deviceorientation', (e) => {
+        const now = performance.now();
+        if (now - lastOrientationSend < 50) return; // ~20 Hz cap
+        lastOrientationSend = now;
+        if (!phonePeer) return;
+        const buf = encodeOrientation(e.alpha ?? 0, e.beta ?? 0, e.gamma ?? 0, now);
+        phonePeer.sendPoseStream(buf);
+    });
 }
