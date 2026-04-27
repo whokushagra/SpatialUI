@@ -1,10 +1,21 @@
-export async function signalNew({ baseUrl = '/api/signal', fetchImpl = fetch } = {}) {
+function defaultApiBase() {
+    const fromEnv = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_ORIGIN;
+    if (fromEnv) return `${fromEnv.replace(/\/$/, '')}/api/signal`;
+    return '/api/signal';
+}
+
+function defaultWsOrigin() {
+    const fromEnv = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_ORIGIN;
+    return fromEnv || (typeof window !== 'undefined' ? window.location.origin : '');
+}
+
+export async function signalNew({ baseUrl = defaultApiBase(), fetchImpl = fetch } = {}) {
     const res = await fetchImpl(`${baseUrl}/new`, { method: 'POST' });
     if (!res.ok) throw new Error(`signal/new failed: ${res.status}`);
     return res.json();
 }
 
-export async function signalClaim({ sessionId, pinHash, baseUrl = '/api/signal', fetchImpl = fetch }) {
+export async function signalClaim({ sessionId, pinHash, baseUrl = defaultApiBase(), fetchImpl = fetch }) {
     const res = await fetchImpl(`${baseUrl}/claim`, {
         method: 'POST',
         body: JSON.stringify({ sessionId, pinHash })
@@ -30,7 +41,7 @@ export function openSignalingSocket({ sessionId, role, claimToken = null, baseWs
     return new WebSocket(url.toString());
 }
 
-export function inferWsBase(httpBase = window.location.origin) {
+export function inferWsBase(httpBase = defaultWsOrigin()) {
     const u = new URL('/api/signal/ws', httpBase);
     u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
     return u.toString();

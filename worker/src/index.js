@@ -47,12 +47,30 @@ async function handleSignalWs(request, env) {
     return stub.fetch(`http://room/ws?role=${role}&t=${claimToken ?? ''}`, request);
 }
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400'
+};
+
+function withCors(res) {
+    const headers = new Headers(res.headers);
+    for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export default {
     async fetch(request, env) {
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { status: 204, headers: CORS_HEADERS });
+        }
         const url = new URL(request.url);
-        if (url.pathname === '/api/signal/new') return handleSignalNew(request, env);
-        if (url.pathname === '/api/signal/claim') return handleSignalClaim(request, env);
-        if (url.pathname === '/api/signal/ws') return handleSignalWs(request, env);
-        return new Response('not found', { status: 404 });
+        let res;
+        if (url.pathname === '/api/signal/new') res = await handleSignalNew(request, env);
+        else if (url.pathname === '/api/signal/claim') res = await handleSignalClaim(request, env);
+        else if (url.pathname === '/api/signal/ws') return handleSignalWs(request, env);
+        else res = new Response('not found', { status: 404 });
+        return withCors(res);
     }
 };
