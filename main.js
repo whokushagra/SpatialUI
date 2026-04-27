@@ -9,6 +9,11 @@ import QRCode from 'qrcode';
 import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 import { createPeer } from './shared/peer.js';
 
+// ===== STABLE ID HELPER =====
+function nextVoidId(prefix = 'obj') {
+    return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // ===== APPLICATION STATE =====
 const state = {
     activeTool: 'select',
@@ -253,6 +258,7 @@ function ensureDefaultScreen() {
     group.name = 'Screen: Main Menu';
     group.userData.isScreenRoot = true;
     group.userData.screenId = id;
+    group.userData.voidId = group.userData.voidId || nextVoidId('screen');
     state.scene.add(group);
     state.screens.push({ id, name: 'Main Menu', group });
     state.activeScreenId = id;
@@ -268,6 +274,7 @@ function createScreen(name = `Screen ${state.screens.length + 1}`) {
     group.name = `Screen: ${name}`;
     group.userData.isScreenRoot = true;
     group.userData.screenId = id;
+    group.userData.voidId = group.userData.voidId || nextVoidId('screen');
     state.scene.add(group);
     state.screens.push({ id, name, group });
     switchToScreen(id);
@@ -720,6 +727,7 @@ function addSampleObjects() {
         mesh.userData.voidType = 'primitive';
         if (group) group.add(mesh);
         else state.scene.add(mesh);
+        mesh.userData.voidId = mesh.userData.voidId || nextVoidId('obj');
         state.objects.push(mesh);
         state.selectableObjects.push(mesh);
     });
@@ -1660,6 +1668,7 @@ function createObject(type) {
         if (screenGroup) screenGroup.add(mesh);
         else state.scene.add(mesh);
     }
+    mesh.userData.voidId = mesh.userData.voidId || nextVoidId('obj');
     state.objects.push(mesh);
     state.selectableObjects.push(mesh);
     selectObject(mesh);
@@ -1742,6 +1751,7 @@ function addObjectToActiveScreen(object, defaultSpatial = null) {
         if (g) g.add(object);
         else state.scene.add(object);
     }
+    object.userData.voidId = object.userData.voidId || nextVoidId('obj');
     state.objects.push(object);
     state.selectableObjects.push(object);
     refreshLayersPanel();
@@ -1796,6 +1806,7 @@ function createFrame(width, height, name = 'Frame') {
     if (g) g.add(group);
     else state.scene.add(group);
     group.userData.screenId = state.activeScreenId;
+    group.userData.voidId = group.userData.voidId || nextVoidId('obj');
     state.objects.push(group);
     state.selectableObjects.push(group);
     refreshLayersPanel();
@@ -3362,6 +3373,7 @@ function createScreenWithImportedId(screenId, name) {
     group.name = `Screen: ${name}`;
     group.userData.isScreenRoot = true;
     group.userData.screenId = screenId;
+    group.userData.voidId = group.userData.voidId || nextVoidId('screen');
     state.scene.add(group);
     state.screens.push({ id: screenId, name, group });
     bumpNextScreenIndexFromImport(screenId);
@@ -3369,6 +3381,7 @@ function createScreenWithImportedId(screenId, name) {
 }
 
 function registerImportedRootObject(root) {
+    root.userData.voidId = root.userData.voidId || nextVoidId('obj');
     state.objects.push(root);
     state.selectableObjects.push(root);
 }
@@ -3664,6 +3677,11 @@ function applyVoidImport(exportObj) {
         populateButtonLinkDropdown();
         updatePrototypeLinkLines();
         showNotification('Loaded saved Void project');
+        if (state.scene) {
+            state.scene.traverse((o) => {
+                if (o.isMesh && !o.userData.voidId) o.userData.voidId = nextVoidId('obj');
+            });
+        }
         return true;
     } finally {
         window.__voidImportInFlight = false;
@@ -5196,6 +5214,7 @@ function addPointLight() {
     if (g) g.add(pointLight);
     else state.scene.add(pointLight);
     state.lights.points.push(pointLight);
+    pointLight.userData.voidId = pointLight.userData.voidId || nextVoidId('obj');
     state.objects.push(pointLight);
 
     pointLight.userData.selectable = true;
