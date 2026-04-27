@@ -53,10 +53,15 @@ async function submitPin() {
             status.textContent = 'PIN OK. Connecting…';
             await startPhonePeer(result.claimToken);
         } else if (result.status === 'wrong-pin') {
-            setError(`Wrong PIN. ${result.attemptsRemaining} attempts left.`);
+            setError(`Wrong PIN. ${result.attemptsRemaining} attempt${result.attemptsRemaining === 1 ? '' : 's'} left.`);
             pinDigits = ''; renderPin();
+            okBtn.disabled = false;
+            if (result.attemptsRemaining === 0) {
+                setError('Too many attempts. Re-scan QR from desktop.');
+                okBtn.disabled = true;
+            }
         } else if (result.status === 'gone') {
-            setError('Session expired. Re-scan the QR from the desktop.');
+            setError('Session expired. Re-scan QR from desktop.');
             okBtn.disabled = true;
         }
     } catch (err) {
