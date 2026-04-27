@@ -7,6 +7,7 @@ import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 import QRCode from 'qrcode';
 import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
+import { createPeer } from './shared/peer.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -91,7 +92,8 @@ const state = {
     prototypeScreenNavJob: null,
     _protoNavTmpVec: new THREE.Vector3(),
     /** @type {null | { wrap: HTMLElement, canvas: HTMLCanvasElement, handle: HTMLButtonElement, ctx: CanvasRenderingContext2D, deletes: HTMLElement, dpr: number }} */
-    prototypeLinkUI: null
+    prototypeLinkUI: null,
+    phonePairMode: false
 };
 
 /** Frames, UI components that can have prototype navigation + links */
@@ -4588,7 +4590,47 @@ function openDesktopSignalingWs(sessionId) {
 function onPhoneClaimed() {
     const status = document.getElementById('phone-pair-status');
     if (status) status.textContent = 'Phone connected — establishing video link…';
-    // WebRTC handshake wired in Phase 7.
+
+    const peer = createPeer({
+        role: 'desktop',
+        signalingWs: phonePair.desktopWs,
+        onTrack: (e) => onPhoneVideoTrack(e),
+        onSceneSync: (data) => onSceneSyncMessage(data),
+        onPoseStream: (buf) => onPoseStreamMessage(buf),
+        onState: (s) => {
+            if (status) status.textContent = `WebRTC: ${s}`;
+            if (s === 'connected') onPeerConnected();
+            if (s === 'failed' || s === 'disconnected' || s === 'closed') onPeerDisconnected();
+        }
+    });
+    phonePair.peer = peer;
+    peer.startOffer();
+}
+
+function onPhoneVideoTrack(_e) {
+    // Wired in Task 9.2.
+}
+function onSceneSyncMessage(_data) {
+    // Wired in Phase 10.
+}
+function onPoseStreamMessage(_buf) {
+    // Wired in Phase 12.
+}
+function onPeerConnected() {
+    const modal = document.getElementById('phone-pair-modal');
+    if (modal) modal.classList.add('hidden');
+    enterPairMode();
+}
+function onPeerDisconnected() {
+    exitPairMode();
+}
+function enterPairMode() {
+    state.phonePairMode = 'connected';
+    // Viewport swap wired in Task 9.2.
+}
+function exitPairMode() {
+    state.phonePairMode = false;
+    if (phonePair.peer) { phonePair.peer.close(); phonePair.peer = null; }
 }
 
 function openPhonePairing() {
