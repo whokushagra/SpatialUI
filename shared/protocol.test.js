@@ -33,3 +33,34 @@ describe('scene-sync codec', () => {
         expect(decodeSceneSync(JSON.stringify({ foo: 1 }))).toBeNull();
     });
 });
+
+import { encodeXrPose, encodeOrientation, decodePose, POSE_TYPE_XR, POSE_TYPE_ORIENT } from './protocol.js';
+
+describe('pose-stream codec', () => {
+    it('round-trips an XR pose matrix', () => {
+        const m = new Float32Array(16);
+        for (let i = 0; i < 16; i++) m[i] = i * 0.1;
+        const ts = 1234.5;
+        const buf = encodeXrPose(m, ts);
+        const decoded = decodePose(buf);
+        expect(decoded.kind).toBe(POSE_TYPE_XR);
+        expect(decoded.matrix).toBeInstanceOf(Float32Array);
+        expect(decoded.matrix.length).toBe(16);
+        for (let i = 0; i < 16; i++) expect(decoded.matrix[i]).toBeCloseTo(i * 0.1, 5);
+        expect(decoded.ts).toBeCloseTo(ts, 2);
+    });
+    it('round-trips a DeviceOrientation triple', () => {
+        const buf = encodeOrientation(10, 20, 30, 99);
+        const decoded = decodePose(buf);
+        expect(decoded.kind).toBe(POSE_TYPE_ORIENT);
+        expect(decoded.alpha).toBeCloseTo(10, 5);
+        expect(decoded.beta).toBeCloseTo(20, 5);
+        expect(decoded.gamma).toBeCloseTo(30, 5);
+        expect(decoded.ts).toBeCloseTo(99, 2);
+    });
+    it('returns null on unknown header', () => {
+        const buf = new ArrayBuffer(2);
+        new DataView(buf).setUint8(0, 0xff);
+        expect(decodePose(buf)).toBeNull();
+    });
+});
