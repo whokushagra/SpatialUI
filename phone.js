@@ -115,10 +115,16 @@ const snapshotReassembler = new SnapshotReassembler();
 let deltaApplier = null;
 
 function applySnapshot(msg) {
-    if (!deltaApplier) deltaApplier = new DeltaApplier(phoneState.threeScene);
-    for (const id of Array.from(deltaApplier.byId.keys())) {
-        deltaApplier.apply([{ op: 'delete', id }]);
+    if (phoneState.snapshotRoot) {
+        phoneState.threeScene.remove(phoneState.snapshotRoot);
     }
+    const root = new THREE.Group();
+    root.position.set(0, 0, -1.5);
+    root.scale.setScalar(0.5);
+    phoneState.threeScene.add(root);
+    phoneState.snapshotRoot = root;
+
+    deltaApplier = new DeltaApplier(root);
     const ops = msg.screen.objects.map((item) => ({
         op: 'create',
         id: item.id,
@@ -154,7 +160,8 @@ const phoneState = {
     threeRenderer: null,
     threeScene: null,
     threeCamera: null,
-    composite: { canvas: null, stream: null }
+    composite: { canvas: null, stream: null },
+    snapshotRoot: null
 };
 
 async function startPhoneCameraAndComposite() {
@@ -208,6 +215,7 @@ async function startPhoneCameraAndComposite() {
 
     phoneState.composite.canvas = composite;
     phoneState.composite.stream = composite.captureStream(30);
+    startCameraOrientationLoop();
     return phoneState.composite.stream;
 }
 
@@ -240,4 +248,28 @@ function flashHighlight(obj) {
     const helper = new THREE.BoxHelper(obj, 0x22c55e);
     phoneState.threeScene.add(helper);
     setTimeout(() => phoneState.threeScene.remove(helper), 1500);
+}
+
+let latestOrientation = { alpha: 0, beta: 0, gamma: 0 };
+
+function startCameraOrientationLoop() {
+    window.addEventListener('deviceorientation', (e) => {
+        latestOrientation = {
+            alpha: e.alpha ?? 0,
+            beta: e.beta ?? 0,
+            gamma: e.gamma ?? 0
+        };
+    });
+    function tick() {
+        if (phoneState.threeCamera) {
+            phoneState.threeCamera.rotation.set(
+                THREE.MathUtils.degToRad(latestOrientation.beta),
+                THREE.MathUtils.degToRad(latestOrientation.alpha),
+                -THREE.MathUtils.degToRad(latestOrientation.gamma),
+                'YXZ'
+            );
+        }
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
 }
