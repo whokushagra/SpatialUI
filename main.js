@@ -4176,113 +4176,6 @@ async function launchQuickLookForActiveScreen() {
     }
 }
 
-function openDesktopMobilePreviewShareDialog() {
-    const payload = encodeMobilePreviewPayload(buildVoidExport());
-    if (!payload) {
-        showNotification('Could not prepare mobile preview link.');
-        return;
-    }
-
-    const base = `${window.location.origin}${window.location.pathname}`;
-    const shareUrl = `${base}?voidMobilePreview=1#v=${encodeURIComponent(payload)}`;
-    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`;
-
-    const old = document.getElementById('void-mobile-preview-share');
-    if (old) old.remove();
-
-    const overlay = document.getElementById('spatial-preview-overlay');
-    const panel = document.createElement('div');
-    panel.id = 'void-mobile-preview-share';
-    panel.style.cssText = `
-        position: absolute;
-        bottom: 12px;
-        right: 12px;
-        z-index: 12000;
-        pointer-events: none;
-    `;
-    const card = document.createElement('div');
-    card.style.cssText = `
-        width: min(92vw, 360px);
-        max-height: min(52vh, 420px);
-        overflow: auto;
-        z-index: 12000;
-        background: rgba(15,23,42,0.95);
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 16px;
-        color: #e2e8f0;
-        font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.45);
-        pointer-events: auto;
-    `;
-    card.innerHTML = `
-        <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Open iPhone AR Preview</div>
-        <p style="margin:0 0 10px 0;color:#94a3b8;">Scan this QR on iPhone Safari. It opens Quick Look AR with your current screen.</p>
-        <div style="display:flex;justify-content:center;margin:8px 0 12px;">
-            <img src="${qrSrc}" alt="Preview QR" width="220" height="220" style="border-radius:8px;border:1px solid #334155;background:#fff;" />
-        </div>
-        <input id="void-mobile-preview-link-input" value="${shareUrl}" readonly style="width:100%;padding:8px;border-radius:8px;border:1px solid #334155;background:#020617;color:#cbd5e1;" />
-        <p style="margin:10px 0 0 0;color:#64748b;">If URL contains localhost, open this app via your Mac's LAN IP first.</p>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-            <button id="void-mobile-preview-copy" style="padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;cursor:pointer;">Copy Link</button>
-            <button id="void-mobile-preview-close" style="padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#334155;color:#fff;cursor:pointer;">Close</button>
-        </div>
-    `;
-    panel.appendChild(card);
-    if (overlay) overlay.appendChild(panel);
-    else document.body.appendChild(panel);
-
-    const input = card.querySelector('#void-mobile-preview-link-input');
-    card.querySelector('#void-mobile-preview-close')?.addEventListener('click', () => panel.remove());
-    card.querySelector('#void-mobile-preview-copy')?.addEventListener('click', async () => {
-        try {
-            if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(shareUrl);
-            else {
-                input?.select();
-                document.execCommand('copy');
-            }
-            showNotification('Mobile preview link copied');
-        } catch {
-            showNotification('Copy failed — use the link field');
-        }
-    });
-}
-
-function initializeIPhoneQuickLookEntry() {
-    const payload = getMobilePreviewPayloadFromUrl();
-    if (!payload) return;
-
-    setAppPhase('editor');
-    applyVoidImport(payload);
-    setViewMode('3d');
-
-    const old = document.getElementById('void-mobile-ar-launch');
-    if (old) old.remove();
-    const launcher = document.createElement('div');
-    launcher.id = 'void-mobile-ar-launch';
-    launcher.style.cssText = `
-        position: fixed;
-        left: 12px;
-        right: 12px;
-        bottom: 12px;
-        z-index: 11000;
-        background: rgba(15,23,42,0.94);
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 12px;
-        color: #e2e8f0;
-        font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    `;
-    launcher.innerHTML = `
-        <div style="font-weight:600;margin-bottom:6px;">iPhone AR Preview Ready</div>
-        <div style="color:#94a3b8;margin-bottom:10px;">Tap to open AR Quick Look and place this UI on a real floor or wall.</div>
-        <button id="void-mobile-ar-launch-btn" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#4f46e5;color:white;font-weight:600;cursor:pointer;">Launch AR on this iPhone</button>
-    `;
-    document.body.appendChild(launcher);
-    launcher.querySelector('#void-mobile-ar-launch-btn')?.addEventListener('click', () => {
-        launchQuickLookForActiveScreen();
-    });
-}
 
 function createSpatialReticle() {
     const geo = new THREE.RingGeometry(0.08, 0.1, 40);
@@ -4502,10 +4395,8 @@ async function openSpatialPreview() {
     try {
         const isMobileDevice = /Android|iPad|iPhone|iPod/i.test(navigator.userAgent || '');
 
-        // Desktop flow: show non-blocking QR + link while webcam preview runs.
-        if (!isMobileDevice) {
-            openDesktopMobilePreviewShareDialog();
-        }
+        // Old QR-share flow superseded by the new phone-pair button (btn-phone-pair).
+        // See openPhonePairing() above.
 
         // iPhone Safari: Quick Look gives the most reliable room-anchored AR today.
         if (isIPhoneSafari()) {
@@ -4606,7 +4497,6 @@ function closeSpatialPreview() {
         overlay.classList.remove('is-open');
         overlay.setAttribute('aria-hidden', 'true');
     }
-    document.getElementById('void-mobile-preview-share')?.remove();
     onWindowResize();
     updateTransformControlsForViewMode();
     showNotification('Preview closed');
@@ -5003,8 +4893,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeEnvironmentsUI();
     initializePropertySectionIcons();
     initializeLucideIcons();
-    initializeIPhoneQuickLookEntry();
-
     // 3D viewport + scene: deferred until setAppPhase('editor') — see ensureEditorExperienceInitialized().
 
     console.log('Initial state:', state);
