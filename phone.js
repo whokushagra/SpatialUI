@@ -1,6 +1,7 @@
 import { signalClaim, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 import { hashPin } from './shared/protocol.js';
 import { createPeer } from './shared/peer.js';
+import * as THREE from 'three';
 
 const fragment = (window.location.hash || '').match(/#s=([0-9a-f]{32})/);
 const sessionId = fragment ? fragment[1] : null;
@@ -68,6 +69,13 @@ async function submitPin() {
 let phonePeer = null;
 
 async function startPhonePeer(claimToken) {
+    status.textContent = 'starting camera…';
+    let compositeStream;
+    try {
+        compositeStream = await startPhoneCameraAndComposite();
+    } catch {
+        return; // status already set inside startPhoneCameraAndComposite
+    }
     const ws = openSignalingSocket({
         sessionId,
         role: 'phone',
@@ -87,13 +95,71 @@ async function startPhonePeer(claimToken) {
             if (s === 'connected') onPhonePeerConnected();
         }
     });
+    compositeStream.getVideoTracks().forEach((t) => phonePeer.pc.addTrack(t, compositeStream));
 }
 
 function onPhonePeerConnected() {
     status.textContent = 'connected';
-    // Camera + composite stream wired in Phase 8.
 }
 
 function onPhoneSceneSync(_data) {
     // Snapshot/delta application wired in Phase 10/11.
+}
+
+const phoneState = {
+    cameraStream: null,
+    threeRenderer: null,
+    threeScene: null,
+    threeCamera: null,
+    composite: { canvas: null, stream: null }
+};
+
+async function startPhoneCameraAndComposite() {
+    const video = document.getElementById('phone-camera-bg');
+    const canvas = document.getElementById('phone-canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    try {
+        phoneState.cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' }, audio: false
+        });
+        video.srcObject = phoneState.cameraStream;
+        await video.play();
+    } catch (err) {
+        status.textContent = `camera: ${err.message}`;
+        throw err;
+    }
+
+    phoneState.threeRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    phoneState.threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    phoneState.threeRenderer.setSize(canvas.width, canvas.height, false);
+    phoneState.threeScene = new THREE.Scene();
+    phoneState.threeCamera = new THREE.PerspectiveCamera(60, canvas.width / canvas.height, 0.05, 50);
+    phoneState.threeCamera.position.set(0, 1.5, 0);
+    phoneState.threeScene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(2, 4, 2);
+    phoneState.threeScene.add(dir);
+
+    function frame() {
+        phoneState.threeRenderer.render(phoneState.threeScene, phoneState.threeCamera);
+        requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    const composite = document.createElement('canvas');
+    composite.width = canvas.width;
+    composite.height = canvas.height;
+    const ctx = composite.getContext('2d');
+    function compositeFrame() {
+        ctx.drawImage(video, 0, 0, composite.width, composite.height);
+        ctx.drawImage(canvas, 0, 0);
+        requestAnimationFrame(compositeFrame);
+    }
+    requestAnimationFrame(compositeFrame);
+
+    phoneState.composite.canvas = composite;
+    phoneState.composite.stream = composite.captureStream(30);
+    return phoneState.composite.stream;
 }
