@@ -4627,9 +4627,13 @@ function onSceneSyncMessage(data) {
 
 function sendSnapshotToPhone() {
     const screen = getActiveScreen();
-    if (!screen) return;
+    if (!screen) {
+        console.warn('[phoneBridge] sendSnapshotToPhone: no active screen');
+        return;
+    }
     const screenGroup = screen.group ?? screen;
     const screenJson = serializeScreen(screenGroup);
+    console.log('[phoneBridge] sending snapshot — objects:', screenJson.objects.length, screenJson);
     const fullMsg = { t: MSG.SNAPSHOT, screen: screenJson };
     const chunks = chunkSnapshot(fullMsg);
     for (const c of chunks) phonePair.peer?.sendSceneSync(encodeSceneSync(c));
@@ -4934,7 +4938,24 @@ window.XRSpatialUI = {
     createScreen,
     switchToScreen,
     setAppPhase,
-    ensureEditorExperienceInitialized
+    ensureEditorExperienceInitialized,
+    // Debug surface for the phone-bridge feature
+    phonePair,
+    sendSnapshotToPhone,
+    debugSnapshot: () => {
+        const screen = getActiveScreen();
+        if (!screen) return { error: 'no active screen' };
+        const screenGroup = screen.group ?? screen;
+        const tagged = [];
+        screenGroup.traverse(o => {
+            if (o === screenGroup) return;
+            if (o.isMesh && o.userData?.voidId) {
+                tagged.push({ id: o.userData.voidId, name: o.name, type: o.geometry?.type, pos: [o.position.x, o.position.y, o.position.z] });
+            }
+        });
+        const json = serializeScreen(screenGroup);
+        return { activeScreenId: state.activeScreenId, totalDescendants: screenGroup.children.length, taggedMeshes: tagged.length, taggedSample: tagged.slice(0, 5), serializedObjects: json.objects.length, serializedSample: json.objects.slice(0, 5) };
+    }
 };
 
 // ===== APPEARANCE CONTROLS =====
