@@ -20,3 +20,17 @@ export async function signalClaim({ sessionId, pinHash, baseUrl = '/api/signal',
     if (res.status === 404) return { status: 'gone' };
     throw new Error(`signal/claim unexpected status: ${res.status}`);
 }
+
+export function openSignalingSocket({ sessionId, role, claimToken = null, baseWsUrl }) {
+    const url = new URL(baseWsUrl);
+    url.searchParams.set('role', role);
+    url.searchParams.set('s', sessionId);
+    if (claimToken) url.searchParams.set('t', claimToken);
+    return new WebSocket(url.toString());
+}
+
+export function inferWsBase(httpBase = window.location.origin) {
+    const u = new URL('/api/signal/ws', httpBase);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return u.toString();
+}
