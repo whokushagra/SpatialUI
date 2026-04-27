@@ -10,7 +10,7 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["SessionRoom"]
+new_sqlite_classes = ["SessionRoom"]
 
 [dev]
 port = 8787
