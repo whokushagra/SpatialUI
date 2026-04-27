@@ -55,6 +55,9 @@ export class SessionRoom {
             }
             if (!this.claimToken) this.claimToken = randHex(24);
             this.lastActivityAt = Date.now();
+            if (this.desktopWs) {
+                try { this.desktopWs.send(JSON.stringify({ kind: 'phone-claimed' })); } catch {}
+            }
             return Response.json({ claimToken: this.claimToken });
         }
         if (url.pathname === '/ws') {

@@ -6,7 +6,7 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 import QRCode from 'qrcode';
-import { signalNew } from './shared/signaling-client.js';
+import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -4568,6 +4568,29 @@ const phonePair = {
     abortController: null
 };
 
+function openDesktopSignalingWs(sessionId) {
+    const ws = openSignalingSocket({ sessionId, role: 'desktop', baseWsUrl: inferWsBase() });
+    phonePair.desktopWs = ws;
+    ws.addEventListener('message', (e) => {
+        let msg = null;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.kind === 'phone-claimed') onPhoneClaimed();
+    });
+    ws.addEventListener('close', () => {
+        if (phonePair.desktopWs === ws) phonePair.desktopWs = null;
+    });
+    return new Promise((resolve, reject) => {
+        ws.addEventListener('open', () => resolve(ws), { once: true });
+        ws.addEventListener('error', reject, { once: true });
+    });
+}
+
+function onPhoneClaimed() {
+    const status = document.getElementById('phone-pair-status');
+    if (status) status.textContent = 'Phone connected — establishing video link…';
+    // WebRTC handshake wired in Phase 7.
+}
+
 function openPhonePairing() {
     const modal = document.getElementById('phone-pair-modal');
     const qrCanvas = document.getElementById('phone-pair-qr');
@@ -4589,6 +4612,7 @@ function openPhonePairing() {
                 .then(() => {
                     pinValue.textContent = pin;
                     status.textContent = 'Waiting for phone…';
+                    return openDesktopSignalingWs(sessionId);
                 });
         })
         .catch((err) => {
