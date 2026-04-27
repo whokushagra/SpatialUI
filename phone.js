@@ -1,5 +1,6 @@
-import { signalClaim } from './shared/signaling-client.js';
+import { signalClaim, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
 import { hashPin } from './shared/protocol.js';
+import { createPeer } from './shared/peer.js';
 
 const fragment = (window.location.hash || '').match(/#s=([0-9a-f]{32})/);
 const sessionId = fragment ? fragment[1] : null;
@@ -48,7 +49,7 @@ async function submitPin() {
             window.__phoneClaim = { sessionId, claimToken: result.claimToken };
             pinScreen.style.display = 'none';
             status.textContent = 'PIN OK. Connecting…';
-            // WebRTC handshake wired in Phase 7.
+            await startPhonePeer(result.claimToken);
         } else if (result.status === 'wrong-pin') {
             setError(`Wrong PIN. ${result.attemptsRemaining} attempts left.`);
             pinDigits = ''; renderPin();
@@ -62,4 +63,37 @@ async function submitPin() {
     } finally {
         if (!okBtn.disabled || pinDigits.length === 0) okBtn.disabled = false;
     }
+}
+
+let phonePeer = null;
+
+async function startPhonePeer(claimToken) {
+    const ws = openSignalingSocket({
+        sessionId,
+        role: 'phone',
+        claimToken,
+        baseWsUrl: inferWsBase()
+    });
+    await new Promise((res, rej) => {
+        ws.addEventListener('open', res, { once: true });
+        ws.addEventListener('error', rej, { once: true });
+    });
+    phonePeer = createPeer({
+        role: 'phone',
+        signalingWs: ws,
+        onSceneSync: (d) => onPhoneSceneSync(d),
+        onState: (s) => {
+            status.textContent = `WebRTC: ${s}`;
+            if (s === 'connected') onPhonePeerConnected();
+        }
+    });
+}
+
+function onPhonePeerConnected() {
+    status.textContent = 'connected';
+    // Camera + composite stream wired in Phase 8.
+}
+
+function onPhoneSceneSync(_data) {
+    // Snapshot/delta application wired in Phase 10/11.
 }
