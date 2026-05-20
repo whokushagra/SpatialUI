@@ -315,6 +315,7 @@ function startOrientationLoop() {
 
 function startTapHandler() {
     document.addEventListener('click', (e) => {
+        if (phoneState.xrSession) return;
         const target = e.target;
         if (target.closest('.phone-pin-keypad') || target.closest('#phone-mode-toggle')) return;
         const x = e.clientX / window.innerWidth;
@@ -482,7 +483,10 @@ function onXrSessionEnd() {
     }
     phoneState.xrSession = null;
     phoneState.xrRefSpace = null;
-    phoneState.xrHitTest = null;
+    if (phoneState.xrHitTest) {
+        phoneState.xrHitTest.cancel();
+        phoneState.xrHitTest = null;
+    }
     phoneState.scenePlaced = false;
 
     // Make any placed snapshot visible again in non-XR render.

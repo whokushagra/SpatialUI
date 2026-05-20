@@ -3165,7 +3165,6 @@ select,
     position: fixed;
     inset: 0;
     z-index: 9000;
-    pointer-events: none;        /* pass taps through to XR select by default */
 }
 
 .ar-mode-badge {
