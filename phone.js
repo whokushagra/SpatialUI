@@ -151,10 +151,16 @@ function applySnapshot(msg) {
     }));
     deltaApplier.apply(ops);
 
-    // Auto-frame the snapshot in front of the phone camera. Editor-world coordinates can be
-    // anywhere; we measure the assembled bounding box, scale to ~1m largest dimension, and
-    // park the centroid 1.5m ahead of the camera at eye level.
-    autoFrameSnapshot(root);
+    if (phoneState.xrSession) {
+        // XR mode: hide until user taps to place. Reset so placement hint reappears.
+        root.visible = false;
+        phoneState.scenePlaced = false;
+        document.getElementById('ar-placement-hint').style.display = 'flex';
+        document.getElementById('ar-controls').style.display = 'none';
+    } else {
+        // Non-XR: auto-frame objects 1.5m in front of camera as before.
+        autoFrameSnapshot(root);
+    }
 
     const box = new THREE.Box3().setFromObject(root);
     const c = new THREE.Vector3(); const s = new THREE.Vector3();
