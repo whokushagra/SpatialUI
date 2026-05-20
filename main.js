@@ -5412,32 +5412,29 @@ function exitPairMode() {
 }
 
 function openPhonePairing() {
-    const modal = document.getElementById('phone-pair-modal');
-    const qrCanvas = document.getElementById('phone-pair-qr');
-    const pinValue = document.getElementById('phone-pair-pin-value');
-    const status = document.getElementById('phone-pair-status');
-    if (!modal || !qrCanvas || !pinValue || !status) return;
-
-    modal.classList.remove('hidden');
-    pinValue.textContent = '----';
-    status.textContent = 'Minting session…';
+    if (state.phonePairMode) return; // already connected — ignore
 
     signalNew()
         .then(({ sessionId, pin }) => {
             phonePair.sessionId = sessionId;
             phonePair.pin = pin;
-            const phoneUrl = `${window.location.origin}/phone.html#s=${sessionId}`;
+
+            // Embed the raw PIN in the URL so the new tab auto-connects
+            // without requiring manual PIN entry.
+            const phoneUrl = `${window.location.origin}/phone.html#s=${sessionId}&p=${pin}`;
             window.__voidLastPhoneUrl = phoneUrl;
-            return QRCode.toCanvas(qrCanvas, phoneUrl, { width: 240, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
-                .then(() => {
-                    pinValue.textContent = pin;
-                    status.textContent = 'Waiting for phone…';
-                    return openDesktopSignalingWs(sessionId);
-                });
+
+            // Open the phone view in a new browser tab.
+            window.open(phoneUrl, 'void-phone-preview');
+
+            // Start the desktop signaling socket to wait for the tab to connect.
+            openDesktopSignalingWs(sessionId);
+
+            showNotification('Phone view opened in new tab…');
         })
         .catch((err) => {
             console.error('[phonePair] signalNew failed', err);
-            status.textContent = 'Could not reach pairing server.';
+            showNotification('Could not open phone view — check network', 'error');
         });
 }
 

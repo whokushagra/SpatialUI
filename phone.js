@@ -4,8 +4,13 @@ import { createPeer } from './shared/peer.js';
 import { DeltaApplier } from './shared/delta-applier.js';
 import * as THREE from 'three';
 
-const fragment = (window.location.hash || '').match(/#s=([0-9a-f]{32})/);
-const sessionId = fragment ? fragment[1] : null;
+const hashStr = window.location.hash || '';
+const sessionMatch = hashStr.match(/[#&]s=([0-9a-f]{32})/);
+const sessionId = sessionMatch ? sessionMatch[1] : null;
+// Auto-PIN: embedded by the desktop when opening a new tab so the user
+// doesn't need to type it — phone.html#s=SESSION&p=1234
+const autoPinMatch = hashStr.match(/[#&]p=(\d{4})/);
+const autoPin = autoPinMatch ? autoPinMatch[1] : null;
 
 const status = document.getElementById('phone-status');
 const pinScreen = document.getElementById('phone-pin-screen');
@@ -26,7 +31,27 @@ function setError(message) {
 if (!sessionId) {
     setError('Invalid pairing link. Re-scan the QR from the desktop.');
     okBtn.disabled = true;
+} else if (autoPin) {
+    // ── Auto-connect path (opened as a desktop tab with PIN in URL) ──────────
+    pinScreen.style.display = 'none';
+    status.textContent = 'Connecting…';
+    (async () => {
+        try {
+            const pinHash = await hashPin(sessionId, autoPin);
+            const result = await signalClaim({ sessionId, pinHash });
+            if (result.status === 'ok') {
+                window.__phoneClaim = { sessionId, claimToken: result.claimToken };
+                await startPhonePeer(result.claimToken);
+            } else {
+                setError(`Auto-connect failed (${result.status}). Close this tab and re-open from workspace.`);
+            }
+        } catch (err) {
+            console.error('[phone] auto-connect error', err);
+            setError('Auto-connect failed. Close this tab and re-open from workspace.');
+        }
+    })();
 } else {
+    // ── Manual PIN-entry path (QR code scanned on physical phone) ────────────
     status.textContent = `session ${sessionId.slice(0, 6)}…`;
     pinScreen.querySelectorAll('.phone-pin-keypad button').forEach((b) => {
         b.addEventListener('click', () => {
@@ -109,6 +134,19 @@ async function startPhonePeer(claimToken) {
 
 async function onPhonePeerConnected() {
     status.textContent = 'connected';
+
+    // Show the disconnect button now that we're live.
+    const disconnectBtn = document.getElementById('phone-disconnect-btn');
+    if (disconnectBtn) {
+        disconnectBtn.style.display = 'flex';
+        disconnectBtn.addEventListener('click', () => {
+            phonePeer?.close?.();
+            // Bring the workspace tab back into focus, then close this tab.
+            if (window.opener && !window.opener.closed) window.opener.focus();
+            window.close();
+        }, { once: true });
+    }
+
     const isAndroid = /Android/i.test(navigator.userAgent);
     let xrSupported = false;
     if (isAndroid && navigator.xr) {
