@@ -3107,3 +3107,55 @@ select,
     cursor: pointer !important;
     font-family: inherit !important;
 }
+
+/* ===== PHONE BRIDGE ===== */
+#phone-pair-modal {
+    position: fixed; inset: 0; z-index: 12000;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+}
+#phone-pair-modal.hidden { display: none; }
+.phone-pair-card {
+    background: #0f172a; color: #e2e8f0;
+    border: 1px solid #334155; border-radius: 12px;
+    padding: 24px; width: min(92vw, 360px);
+    box-shadow: 0 12px 28px rgba(0,0,0,0.5);
+    text-align: center;
+    font-family: Inter, system-ui, sans-serif;
+}
+.phone-pair-card h2 { font-size: 16px; margin: 0 0 6px; }
+.phone-pair-sub { font-size: 13px; color: #94a3b8; margin: 0 0 16px; }
+#phone-pair-qr { background: #fff; border-radius: 8px; padding: 8px; }
+.phone-pair-pin { margin-top: 14px; }
+.phone-pair-pin-label { font-size: 12px; color: #94a3b8; letter-spacing: 0.1em; text-transform: uppercase; }
+.phone-pair-pin-value { display: block; font-size: 32px; font-weight: 600; letter-spacing: 0.2em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.phone-pair-status { font-size: 13px; color: #94a3b8; margin-top: 16px; }
+.phone-pair-actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px; }
+.phone-pair-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; cursor: pointer; }
+.phone-pair-actions button:hover { background: #334155; }
+.phone-screen { position: absolute; inset: 0; background: rgba(15,23,42,0.94); color: #e2e8f0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
+.phone-screen h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; text-align: center; }
+.phone-pin-display { font-size: 40px; letter-spacing: 0.4em; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+.phone-pin-error { color: #f87171; min-height: 18px; font-size: 13px; margin-bottom: 8px; }
+.phone-pin-keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: 10px; }
+.phone-pin-keypad button { width: 72px; height: 72px; border-radius: 12px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 22px; cursor: pointer; }
+.phone-pin-keypad button:active { background: #334155; }
+#phone-pin-ok { background: #4f46e5; }
+/* ===== PHASE 9: PAIR-MODE VIEWPORT ===== */
+#phone-feed-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; z-index: 5; }
+.phone-feed-hidden { display: none !important; }
+#phone-feed-banner {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+    padding: 8px 12px; background: rgba(15,23,42,0.85); color: #e2e8f0;
+    display: flex; justify-content: space-between; align-items: center;
+    font: 13px/1.4 Inter, system-ui, sans-serif;
+}
+#phone-feed-banner button {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #334155;
+    background: #1e293b; color: #fff; cursor: pointer;
+}
+.viewport-paired #viewport-3d > canvas { visibility: hidden; }
+/* ===== PHASE 15: PHONE EDIT/PLAY TOGGLE ===== */
+.phone-mode-pill { position: absolute; bottom: 18px; right: 18px; background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 999px; padding: 4px; display: flex; gap: 4px; }
+.phone-mode-pill button { padding: 6px 14px; border-radius: 999px; border: none; background: transparent; color: #cbd5e1; font: 13px Inter, sans-serif; cursor: pointer; }
+.phone-mode-pill button.active { background: #4f46e5; color: #fff; }

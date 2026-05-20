@@ -94,7 +94,9 @@ const state = {
     viewModeEnvVisibilityBackup: null,
     _protoNavTmpVec: new THREE.Vector3(),
     /** @type {null | { wrap: HTMLElement, canvas: HTMLCanvasElement, handle: HTMLButtonElement, ctx: CanvasRenderingContext2D, deletes: HTMLElement, dpr: number }} */
-    prototypeLinkUI: null
+    prototypeLinkUI: null,
+    /** 'idle' | 'pairing' | 'connected' — phone bridge WebRTC state */
+    phonePairMode: false
 };
 
 /** Frames, UI components that can have prototype navigation + links */
@@ -5004,9 +5006,12 @@ function initializeEditorModeAndSpatialPreview() {
     document.getElementById('btn-exit-prototype')?.addEventListener('click', () => setEditorMode('design'));
     document.getElementById('spatial-preview-btn')?.addEventListener('click', () => openSpatialPreview());
     document.getElementById('spatial-preview-close')?.addEventListener('click', () => closeSpatialPreview());
+    document.getElementById('btn-phone-pair')?.addEventListener('click', () => openPhonePairing());
 }
 
-// ===== INITIALIZE APPLICATION =====
+// ===== PHONE BRIDGE =====
+// (functions inserted below; initializeApplication calls openPhonePairing via btn-phone-pair)
+
 function initializeFrameTextPresetModal() {
     document.getElementById('frame-preset-confirm')?.addEventListener('click', confirmFramePreset);
     document.getElementById('frame-preset-cancel')?.addEventListener('click', closeFramePresetModal);
@@ -5182,6 +5187,263 @@ document.addEventListener('DOMContentLoaded', () => {
     setAppPhase('login');
 });
 
+// ===== PHONE BRIDGE IMPLEMENTATION =====
+const phonePair = {
+    sessionId: null,
+    pin: null,
+    desktopWs: null,
+    abortController: null
+};
+
+function showFailureBanner(text) {
+    const banner = document.getElementById('phone-feed-banner');
+    if (!banner) return;
+    const span = banner.querySelector('span');
+    if (span) span.textContent = text;
+}
+
+const deltaQueue = new Map(); // key → latest op (transform/update merging)
+let deltaFlushTimer = null;
+
+function emitDelta(op) {
+    if (state.phonePairMode !== 'connected' || !phonePair.peer) return;
+    if (op.op === 'transform' || op.op === 'update') {
+        const key = `${op.op}:${op.id}`;
+        const existing = deltaQueue.get(key);
+        if (existing && op.op === 'update') {
+            existing.props = { ...existing.props, ...op.props };
+        } else {
+            deltaQueue.set(key, op);
+        }
+        if (!deltaFlushTimer) deltaFlushTimer = setTimeout(flushDeltaQueue, 16);
+    } else {
+        if (deltaFlushTimer) { clearTimeout(deltaFlushTimer); deltaFlushTimer = null; }
+        const ops = Array.from(deltaQueue.values()).concat([op]);
+        deltaQueue.clear();
+        sendDeltaBatch(ops);
+    }
+}
+
+function flushDeltaQueue() {
+    deltaFlushTimer = null;
+    if (deltaQueue.size === 0) return;
+    const ops = Array.from(deltaQueue.values());
+    deltaQueue.clear();
+    sendDeltaBatch(ops);
+}
+
+function sendDeltaBatch(ops) {
+    if (!phonePair.peer) return;
+    phonePair.peer.sendSceneSync(encodeSceneSync({ t: MSG.DELTA, ops }));
+}
+
+function openDesktopSignalingWs(sessionId) {
+    const ws = openSignalingSocket({ sessionId, role: 'desktop', baseWsUrl: inferWsBase() });
+    phonePair.desktopWs = ws;
+    ws.addEventListener('message', (e) => {
+        let msg = null;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        if (msg.kind === 'phone-claimed') onPhoneClaimed();
+        else if (msg.kind === 'pairing-canceled') onPairingCanceled(msg.reason);
+    });
+    ws.addEventListener('close', () => {
+        if (phonePair.desktopWs === ws) phonePair.desktopWs = null;
+    });
+    return new Promise((resolve, reject) => {
+        ws.addEventListener('open', () => resolve(ws), { once: true });
+        ws.addEventListener('error', reject, { once: true });
+    });
+}
+
+function onPhoneClaimed() {
+    const status = document.getElementById('phone-pair-status');
+    if (status) status.textContent = 'Phone connected — establishing video link…';
+
+    const peer = createPeer({
+        role: 'desktop',
+        signalingWs: phonePair.desktopWs,
+        onTrack: (e) => onPhoneVideoTrack(e),
+        onSceneSync: (data) => onSceneSyncMessage(data),
+        onPoseStream: (buf) => onPoseStreamMessage(buf),
+        onState: (s) => {
+            if (status) status.textContent = `WebRTC: ${s}`;
+            if (s === 'connected') onPeerConnected();
+            else if (s === 'failed') {
+                showFailureBanner('Couldn\'t establish a direct connection — your network may block peer-to-peer.');
+                exitPairMode();
+            } else if (s === 'disconnected') {
+                showFailureBanner('Phone disconnected — waiting to reconnect…');
+            } else if (s === 'closed') {
+                exitPairMode();
+            }
+        }
+    });
+    phonePair.peer = peer;
+    peer.startOffer();
+}
+
+function onPairingCanceled(reason) {
+    const status = document.getElementById('phone-pair-status');
+    const message = reason === 'too-many-attempts'
+        ? 'Pairing canceled — too many wrong PINs.'
+        : 'Pairing canceled.';
+    if (status) status.textContent = message;
+    if (phonePair.desktopWs) {
+        try { phonePair.desktopWs.close(); } catch {}
+        phonePair.desktopWs = null;
+    }
+}
+
+function onPhoneVideoTrack(e) {
+    const video = document.getElementById('phone-feed-video');
+    if (!video) return;
+    const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
+    video.srcObject = stream;
+    video.play().catch(() => {});
+}
+let lastPhoneMode = 'edit';
+
+function onSceneSyncMessage(data) {
+    const msg = decodeSceneSync(typeof data === 'string' ? data : new TextDecoder().decode(data));
+    if (!msg) return;
+    if (msg.t === MSG.READY) sendSnapshotToPhone();
+    else if (msg.t === MSG.TAP) handlePhoneTap(msg);
+    else if (msg.t === MSG.MODE) lastPhoneMode = msg.mode;
+}
+
+function sendSnapshotToPhone() {
+    const screen = getActiveScreen();
+    if (!screen) {
+        console.warn('[phoneBridge] sendSnapshotToPhone: no active screen');
+        return;
+    }
+    const screenGroup = screen.group ?? screen;
+    const screenJson = serializeScreen(screenGroup);
+    console.log('[phoneBridge] sending snapshot — objects:', screenJson.objects.length, screenJson);
+    const fullMsg = { t: MSG.SNAPSHOT, screen: screenJson };
+    const chunks = chunkSnapshot(fullMsg);
+    for (const c of chunks) phonePair.peer?.sendSceneSync(encodeSceneSync(c));
+}
+
+function handlePhoneTap(msg) {
+    const screen = getActiveScreen();
+    if (!screen) return;
+    const screenGroup = screen.group ?? screen;
+    const candidates = [];
+    screenGroup.traverse((o) => { if (o.isMesh && o.userData?.voidId) candidates.push(o); });
+    if (candidates.length === 0) return;
+
+    const phoneCam = new THREE.PerspectiveCamera(60, msg.vw / msg.vh, 0.05, 50);
+    if (phonePose.kind === POSE_TYPE_XR && phonePose.matrix) {
+        phoneCam.matrix.fromArray(phonePose.matrix);
+        phoneCam.matrixAutoUpdate = false;
+        phoneCam.matrixWorldNeedsUpdate = true;
+    } else {
+        phoneCam.position.set(0, 1.5, 0);
+        phoneCam.rotation.set(
+            THREE.MathUtils.degToRad(phonePose.beta),
+            THREE.MathUtils.degToRad(phonePose.alpha),
+            -THREE.MathUtils.degToRad(phonePose.gamma),
+            'YXZ'
+        );
+    }
+    phoneCam.updateMatrixWorld(true);
+
+    const ndc = new THREE.Vector2(msg.x * 2 - 1, -(msg.y * 2 - 1));
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, phoneCam);
+    const hit = ray.intersectObjects(candidates, false)[0];
+    if (!hit) return;
+
+    if (lastPhoneMode === 'play') {
+        const linkTargetId = hit.object.userData?.onClickScreenId;
+        if (linkTargetId) {
+            switchToScreen(linkTargetId);
+            return;
+        }
+    }
+    selectObject(hit.object);
+    phonePair.peer?.sendSceneSync(encodeSceneSync({ t: MSG.SELECT_ACK, objectId: hit.object.userData.voidId }));
+}
+
+const phonePose = { kind: null, matrix: null, alpha: 0, beta: 0, gamma: 0, ts: 0 };
+
+function onPoseStreamMessage(buf) {
+    const p = decodePose(buf);
+    if (!p) return;
+    phonePose.kind = p.kind;
+    phonePose.ts = p.ts;
+    if (p.kind === POSE_TYPE_XR) phonePose.matrix = p.matrix;
+    else { phonePose.alpha = p.alpha; phonePose.beta = p.beta; phonePose.gamma = p.gamma; }
+}
+function onPeerConnected() {
+    const modal = document.getElementById('phone-pair-modal');
+    if (modal) modal.classList.add('hidden');
+    enterPairMode();
+}
+function onPeerDisconnected() {
+    exitPairMode();
+}
+function enterPairMode() {
+    state.phonePairMode = 'connected';
+    document.getElementById('phone-feed-video')?.classList.remove('phone-feed-hidden');
+    document.getElementById('phone-feed-banner')?.classList.remove('phone-feed-hidden');
+    document.body.classList.add('viewport-paired');
+}
+
+function exitPairMode() {
+    state.phonePairMode = false;
+    document.getElementById('phone-feed-video')?.classList.add('phone-feed-hidden');
+    document.getElementById('phone-feed-banner')?.classList.add('phone-feed-hidden');
+    document.body.classList.remove('viewport-paired');
+    if (phonePair.peer) { try { phonePair.peer.close(); } catch {} phonePair.peer = null; }
+    if (phonePair.desktopWs) { try { phonePair.desktopWs.close(); } catch {} phonePair.desktopWs = null; }
+    const v = document.getElementById('phone-feed-video');
+    if (v) { v.srcObject = null; }
+}
+
+function openPhonePairing() {
+    const modal = document.getElementById('phone-pair-modal');
+    const qrCanvas = document.getElementById('phone-pair-qr');
+    const pinValue = document.getElementById('phone-pair-pin-value');
+    const status = document.getElementById('phone-pair-status');
+    if (!modal || !qrCanvas || !pinValue || !status) return;
+
+    modal.classList.remove('hidden');
+    pinValue.textContent = '----';
+    status.textContent = 'Minting session…';
+
+    signalNew()
+        .then(({ sessionId, pin }) => {
+            phonePair.sessionId = sessionId;
+            phonePair.pin = pin;
+            const phoneUrl = `${window.location.origin}/phone.html#s=${sessionId}`;
+            window.__voidLastPhoneUrl = phoneUrl;
+            return QRCode.toCanvas(qrCanvas, phoneUrl, { width: 240, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+                .then(() => {
+                    pinValue.textContent = pin;
+                    status.textContent = 'Waiting for phone…';
+                    return openDesktopSignalingWs(sessionId);
+                });
+        })
+        .catch((err) => {
+            console.error('[phonePair] signalNew failed', err);
+            status.textContent = 'Could not reach pairing server.';
+        });
+}
+
+function closePhonePairing() {
+    const modal = document.getElementById('phone-pair-modal');
+    if (modal) modal.classList.add('hidden');
+    if (phonePair.desktopWs) {
+        try { phonePair.desktopWs.close(); } catch {}
+        phonePair.desktopWs = null;
+    }
+    phonePair.sessionId = null;
+    phonePair.pin = null;
+}
+
+
 // ===== EXPORT FOR DEBUGGING =====
 function initializeHelpTutorialMenu() {
     document.getElementById('menu-restart-tutorial')?.addEventListener('click', (e) => {
@@ -5220,7 +5482,24 @@ window.XRSpatialUI = {
     switchToScreen,
     setAppPhase,
     ensureEditorExperienceInitialized,
-    initTutorial
+    initTutorial,
+    // Debug surface for the phone-bridge feature
+    phonePair,
+    sendSnapshotToPhone,
+    debugSnapshot: () => {
+        const screen = getActiveScreen();
+        if (!screen) return { error: 'no active screen' };
+        const screenGroup = screen.group ?? screen;
+        const tagged = [];
+        screenGroup.traverse(o => {
+            if (o === screenGroup) return;
+            if (o.isMesh && o.userData?.voidId) {
+                tagged.push({ id: o.userData.voidId, name: o.name, type: o.geometry?.type, pos: [o.position.x, o.position.y, o.position.z] });
+            }
+        });
+        const json = serializeScreen(screenGroup);
+        return { activeScreenId: state.activeScreenId, totalDescendants: screenGroup.children.length, taggedMeshes: tagged.length, taggedSample: tagged.slice(0, 5), serializedObjects: json.objects.length, serializedSample: json.objects.slice(0, 5) };
+    }
 };
 
 // ===== APPEARANCE CONTROLS =====

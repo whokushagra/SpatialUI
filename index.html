@@ -194,6 +194,13 @@
                     <button type="button" class="mode-pill" id="prototype-mode-btn" aria-pressed="false" title="Play prototype — buttons jump to linked screens">Prototype Mode</button>
                 </div>
                 <button type="button" class="icon-button" id="spatial-preview-btn" title="Preview in space" data-tooltip="Preview in space"><i data-lucide="camera"></i></button>
+                <button id="btn-phone-pair" class="icon-button" data-tool="phone-pair" title="Live phone preview">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="3" width="12" height="18" rx="2"></rect>
+                        <rect x="9" y="6" width="6" height="6" fill="currentColor"></rect>
+                        <circle cx="12" cy="18" r="0.8" fill="currentColor"></circle>
+                    </svg>
+                </button>
                 <button class="icon-button" title="Share project" data-tooltip="Share project"><i data-lucide="share-2"></i></button>
                 <button class="btn-primary" data-tooltip="Export project">Preview on Device</button>
             </div>
@@ -377,6 +384,11 @@
                             </svg>
                         </div>
                     </div>
+                </div>
+                <video id="phone-feed-video" class="phone-feed-hidden" autoplay playsinline muted></video>
+                <div id="phone-feed-banner" class="phone-feed-hidden">
+                    <span>Live to phone — tap on phone or layer to select</span>
+                    <button id="phone-feed-disconnect" type="button">Disconnect</button>
                 </div>
             </div>
 
@@ -815,6 +827,22 @@
     </div>
 
     <script type="module" src="main.js"></script>
+
+    <div id="phone-pair-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="phone-pair-title">
+        <div class="phone-pair-card">
+            <h2 id="phone-pair-title">Pair phone for live preview</h2>
+            <p class="phone-pair-sub">Scan this QR with your phone, then enter the PIN.</p>
+            <canvas id="phone-pair-qr" width="240" height="240"></canvas>
+            <div class="phone-pair-pin">
+                <span class="phone-pair-pin-label">PIN</span>
+                <span id="phone-pair-pin-value" class="phone-pair-pin-value">----</span>
+            </div>
+            <div class="phone-pair-status" id="phone-pair-status">Waiting for phone…</div>
+            <div class="phone-pair-actions">
+                <button id="phone-pair-cancel" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>
