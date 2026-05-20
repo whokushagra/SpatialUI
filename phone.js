@@ -349,19 +349,55 @@ function startCameraOrientationLoop() {
 async function startWebXrMode() {
     try {
         const session = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['hit-test'],
+            requiredFeatures: ['hit-test', 'dom-overlay'],
+            domOverlay: { root: document.getElementById('ar-overlay') },
             optionalFeatures: ['depth-sensing']
         });
         phoneState.xrSession = session;
-        await phoneState.threeRenderer.xr.setSession(session);
+
+        // IMPORTANT: xr.enabled must be true BEFORE setSession is called.
         phoneState.threeRenderer.xr.enabled = true;
-        const refSpace = await session.requestReferenceSpace('local');
+        await phoneState.threeRenderer.xr.setSession(session);
+
+        // local-floor: Y=0 is detected floor — objects appear at correct real-world heights.
+        const refSpace = await session.requestReferenceSpace('local-floor');
         phoneState.xrRefSpace = refSpace;
+
+        // Viewer space needed for hit-test (ray cast from current camera view).
         const viewerSpace = await session.requestReferenceSpace('viewer');
         phoneState.xrHitTest = await session.requestHitTestSource({ space: viewerSpace });
-        startXrPoseLoop();
+
+        // Build reticle ring — tracks hit-test surface.
+        const geo = new THREE.RingGeometry(0.1, 0.14, 32).rotateX(-Math.PI / 2);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+        phoneState.reticle = new THREE.Mesh(geo, mat);
+        phoneState.reticle.matrixAutoUpdate = false; // we write the matrix directly from XR pose
+        phoneState.reticle.visible = false;
+        phoneState.threeScene.add(phoneState.reticle);
+
+        // Show overlay.
+        document.getElementById('ar-overlay').style.display = 'block';
+        document.getElementById('ar-placement-hint').style.display = 'flex';
+        document.getElementById('ar-controls').style.display = 'none';
+
+        // Hide snapshot root until user taps to place.
+        if (phoneState.snapshotRoot) phoneState.snapshotRoot.visible = false;
+        phoneState.scenePlaced = false;
+
+        // Tap-to-place + session lifecycle.
+        session.addEventListener('select', onXrSelect);
+        session.addEventListener('end', onXrSessionEnd);
+
+        // Wire overlay buttons.
+        document.getElementById('ar-reset-btn').addEventListener('click', resetArPlacement);
+        document.getElementById('ar-exit-btn').addEventListener('click', () => session.end());
+
+        // XR frame updates are driven by setAnimationLoop; plug in the XR logic.
+        phoneState.threeRenderer.setAnimationLoop(onXrFrame);
+
     } catch (err) {
-        status.textContent = `WebXR failed: ${err.message}`;
+        console.error('[AR] startWebXrMode failed:', err);
+        status.textContent = `AR failed: ${err.message}`;
     }
 }
 
