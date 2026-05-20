@@ -229,14 +229,39 @@ function autoFrameSnapshot(root) {
 
 /**
  * AR placement: called on XR tap-to-place.
- * Uses the live XR camera pose (not the hit-test floor point) so objects
- * always appear 1.5 m in front of the user's gaze at eye height,
- * regardless of editor-space Z offsets.
+ * In XR mode objects are at their designed sizes (1 unit = 1 m) so we do NOT
+ * rescale — just position the root so the content centre sits 1.5 m in front
+ * of the user at eye height, using the live ARCore camera pose.
  */
 function arFrameSnapshot(root) {
-    // renderer.xr.getCamera() returns the ArrayCamera with the current XR pose.
     const xrCam = phoneState.threeRenderer?.xr?.getCamera() ?? phoneState.threeCamera;
-    frameRootInFrontOfCamera(root, xrCam);
+    if (!xrCam) return;
+
+    // Keep scale at 1:1 — designed sizes already match real-world metres.
+    root.scale.set(1, 1, 1);
+    root.position.set(0, 0, 0);
+    root.updateMatrixWorld(true);
+
+    const box = new THREE.Box3().setFromObject(root);
+    const center = new THREE.Vector3();
+    if (!box.isEmpty()) box.getCenter(center);
+
+    // Camera forward (horizontal plane only).
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(xrCam.quaternion);
+    forward.y = 0;
+    if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
+    forward.normalize();
+
+    const camPos = new THREE.Vector3();
+    xrCam.getWorldPosition(camPos);
+    const target = camPos.clone().addScaledVector(forward, 1.5);
+    target.y = camPos.y; // eye height
+
+    root.position.set(
+        target.x - center.x,
+        target.y - center.y,
+        target.z - center.z
+    );
 }
 
 function onPhoneSceneSync(data) {
@@ -296,9 +321,10 @@ async function startPhoneCameraAndComposite() {
         throw err;
     }
 
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try { await DeviceOrientationEvent.requestPermission(); } catch {}
-    }
+    // iOS 13+ requires DeviceOrientationEvent.requestPermission() to be called
+    // from a direct user-gesture call stack (not from an async WebRTC callback).
+    // We register the orientation listener now; permission is requested on first
+    // screen tap via requestOrientationPermissionOnFirstTap() called below.
 
     phoneState.threeRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     phoneState.threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -335,6 +361,9 @@ async function startPhoneCameraAndComposite() {
     phoneState.composite.canvas = composite;
     phoneState.composite.stream = composite.captureStream(30);
     startCameraOrientationLoop();
+    // On iOS, fire the permission dialog on the user's first screen tap so
+    // deviceorientation events are allowed to flow to the already-registered listener.
+    requestOrientationPermissionOnFirstTap();
     return phoneState.composite.stream;
 }
 
@@ -368,6 +397,23 @@ function flashHighlight(obj) {
     const helper = new THREE.BoxHelper(obj, 0x22c55e);
     phoneState.threeScene.add(helper);
     setTimeout(() => phoneState.threeScene.remove(helper), 1500);
+}
+
+/**
+ * iOS 13+ requires DeviceOrientationEvent.requestPermission() to be called
+ * directly from a user-gesture handler. We fire it on the first tap anywhere
+ * on the page. The deviceorientation listener in startCameraOrientationLoop
+ * is already registered — once permission is granted events start flowing.
+ */
+function requestOrientationPermissionOnFirstTap() {
+    if (typeof DeviceOrientationEvent?.requestPermission !== 'function') return; // non-iOS, no-op
+    const attempt = async () => {
+        try {
+            await DeviceOrientationEvent.requestPermission();
+            // Permission granted — events now flow to the existing listener automatically.
+        } catch { /* user declined or browser error — orientation simply won't work */ }
+    };
+    window.addEventListener('touchstart', attempt, { once: true, passive: true });
 }
 
 let latestOrientation = { alpha: 0, beta: 0, gamma: 0 };
