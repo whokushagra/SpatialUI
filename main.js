@@ -6,6 +6,11 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 import { initLoginScene, disposeLoginScene } from './loginScene.js';
+import QRCode from 'qrcode';
+import { signalNew, openSignalingSocket, inferWsBase } from './shared/signaling-client.js';
+import { createPeer } from './shared/peer.js';
+import { MSG, encodeSceneSync, decodeSceneSync, chunkSnapshot, decodePose, POSE_TYPE_XR, POSE_TYPE_ORIENT } from './shared/protocol.js';
+import { serializeScreen } from './shared/snapshot.js';
 
 // ===== APPLICATION STATE =====
 const state = {
