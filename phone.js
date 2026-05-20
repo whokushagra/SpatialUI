@@ -218,7 +218,10 @@ const phoneState = {
     snapshotRoot: null,
     xrSession: null,
     xrRefSpace: null,
-    xrHitTest: null
+    xrHitTest: null,
+    _xrFrame: null,
+    reticle: null,
+    scenePlaced: false
 };
 
 async function startPhoneCameraAndComposite() {
@@ -261,12 +264,16 @@ async function startPhoneCameraAndComposite() {
     dir.position.set(2, 4, 2);
     phoneState.threeScene.add(dir);
 
-    function frame() {
+    // Unified render loop — handles both regular and WebXR frames.
+    // In XR mode (frame !== null) WebXRManager updates the camera automatically;
+    // the XR hit-test and pose-stream logic run in startWebXrMode's onFrame handler.
+    phoneState.threeRenderer.setAnimationLoop((timestamp, frame) => {
+        phoneState._xrFrame = frame ?? null;
         phoneState.threeRenderer.render(phoneState.threeScene, phoneState.threeCamera);
-        requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
+    });
 
+    // Composite: draw live camera video behind the WebGL canvas for desktop preview stream.
+    // This runs independently at ~30 fps and is only used for the WebRTC video track.
     const composite = document.createElement('canvas');
     composite.width = canvas.width;
     composite.height = canvas.height;
