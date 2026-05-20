@@ -463,6 +463,33 @@ function showArControls() {
     document.getElementById('ar-controls').style.display = 'flex';
 }
 
+function onXrSessionEnd() {
+    // Clean up XR state.
+    if (phoneState.reticle) {
+        phoneState.threeScene.remove(phoneState.reticle);
+        phoneState.reticle.geometry?.dispose();
+        phoneState.reticle.material?.dispose();
+        phoneState.reticle = null;
+    }
+    phoneState.xrSession = null;
+    phoneState.xrRefSpace = null;
+    phoneState.xrHitTest = null;
+    phoneState.scenePlaced = false;
+
+    // Make any placed snapshot visible again in non-XR render.
+    if (phoneState.snapshotRoot) phoneState.snapshotRoot.visible = true;
+
+    // Disable XR mode on the renderer; restore regular render loop.
+    phoneState.threeRenderer.xr.enabled = false;
+    phoneState.threeRenderer.setAnimationLoop((timestamp, frame) => {
+        phoneState._xrFrame = null;
+        phoneState.threeRenderer.render(phoneState.threeScene, phoneState.threeCamera);
+    });
+
+    // Hide AR overlay.
+    document.getElementById('ar-overlay').style.display = 'none';
+}
+
 let phoneMode = 'edit';
 
 function startModeToggle() {
