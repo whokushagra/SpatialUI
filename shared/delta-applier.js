@@ -15,9 +15,7 @@ export class DeltaApplier {
             else if (o.op === 'transform') xforms.push(o);
             else if (o.op === 'delete') deletes.push(o);
         }
-        // Deletes that also have a same-batch create are treated as "replace":
-        // remove the old object first so the create starts fresh.
-        // Deletes with no same-batch create run after updates/transforms.
+        // Deletes with a same-batch create are treated as replace: remove old first.
         for (const op of deletes) {
             if (createdIds.has(op.id)) this._delete(op);
         }
@@ -29,11 +27,46 @@ export class DeltaApplier {
         }
     }
     _create(op) {
-        let geo;
-        if (op.type === 'sphere') geo = new THREE.SphereGeometry(0.5, 16, 16);
-        else if (op.type === 'plane') geo = new THREE.PlaneGeometry(1, 1);
-        else geo = new THREE.BoxGeometry(1, 1, 1);
-        const mat = new THREE.MeshStandardMaterial({ color: op.color || '#ffffff' });
+        let geo, mat;
+        const w = op.w, h = op.h;
+
+        if (op.type === 'button') {
+            geo = new THREE.BoxGeometry(w ?? 0.72, h ?? 0.22, 0.03);
+            mat = new THREE.MeshStandardMaterial({ color: op.color || '#4f46e5' });
+        } else if (op.type === 'panel') {
+            geo = new THREE.BoxGeometry(w ?? 1.2, h ?? 0.8, 0.04);
+            mat = new THREE.MeshStandardMaterial({
+                color: op.color || '#1e293b',
+                transparent: true,
+                opacity: 0.92
+            });
+        } else if (op.type === 'frame') {
+            geo = new THREE.PlaneGeometry(w ?? 1, h ?? 1);
+            mat = new THREE.MeshStandardMaterial({
+                color: op.color || '#0f172a',
+                transparent: true,
+                opacity: 0.45,
+                side: THREE.DoubleSide
+            });
+        } else if (op.type === 'text') {
+            geo = new THREE.PlaneGeometry(w ?? 0.8, h ?? 0.15);
+            mat = new THREE.MeshStandardMaterial({
+                color: op.color || '#e2e8f0',
+                transparent: true,
+                opacity: 0.35
+            });
+        } else if (op.type === 'sphere') {
+            geo = new THREE.SphereGeometry(0.5, 16, 16);
+            mat = new THREE.MeshStandardMaterial({ color: op.color || '#6366f1' });
+        } else if (op.type === 'plane') {
+            geo = new THREE.PlaneGeometry(w ?? 1, h ?? 1);
+            mat = new THREE.MeshStandardMaterial({ color: op.color || '#ffffff' });
+        } else {
+            // 'box', 'primitive', or unknown
+            geo = new THREE.BoxGeometry(w ?? 0.5, h ?? 0.5, 0.5);
+            mat = new THREE.MeshStandardMaterial({ color: op.color || '#6366f1' });
+        }
+
         const mesh = new THREE.Mesh(geo, mat);
         mesh.userData.voidId = op.id;
         if (op.pos) mesh.position.fromArray(op.pos);
