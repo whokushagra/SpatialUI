@@ -335,25 +335,24 @@ function flashHighlight(obj) {
 let latestOrientation = { alpha: 0, beta: 0, gamma: 0 };
 
 function startCameraOrientationLoop() {
+    const euler = new THREE.Euler();
     window.addEventListener('deviceorientation', (e) => {
         latestOrientation = {
             alpha: e.alpha ?? 0,
-            beta: e.beta ?? 0,
+            beta:  e.beta  ?? 0,
             gamma: e.gamma ?? 0
         };
-    });
-    function tick() {
-        if (phoneState.threeCamera) {
-            phoneState.threeCamera.rotation.set(
+        if (phoneState.threeCamera && !phoneState.xrSession) {
+            // YXZ order matches phone portrait: alpha=compass(Y), beta=tilt-fwd(X), gamma=roll(Z).
+            euler.set(
                 THREE.MathUtils.degToRad(latestOrientation.beta),
                 THREE.MathUtils.degToRad(latestOrientation.alpha),
                 -THREE.MathUtils.degToRad(latestOrientation.gamma),
                 'YXZ'
             );
+            phoneState.threeCamera.quaternion.setFromEuler(euler);
         }
-        requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
+    });
 }
 
 async function startWebXrMode() {
