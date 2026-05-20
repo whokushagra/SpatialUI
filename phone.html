@@ -37,6 +37,21 @@
             <button data-mode="edit" class="active">Edit</button>
             <button data-mode="play">Play</button>
         </div>
+
+        <!-- AR DOM overlay — shown during immersive-ar WebXR session -->
+        <div id="ar-overlay">
+            <span id="ar-mode-badge" class="ar-mode-badge">AR Mode</span>
+            <div id="ar-placement-hint" class="ar-placement-hint">
+                <p>Tap a surface to place your design</p>
+            </div>
+            <div id="ar-controls" class="ar-controls">
+                <button id="ar-reset-btn" class="ar-btn">Reset placement</button>
+                <button id="ar-exit-btn" class="ar-btn ar-btn-exit">Exit AR</button>
+            </div>
+        </div>
+
+        <!-- iOS / 3DoF fallback badge -->
+        <span id="ios-mode-badge" class="ar-mode-badge ar-mode-badge--3dof" style="display:none;">3DoF Mode</span>
     </div>
     <script type="module" src="/phone.js"></script>
 </body>
