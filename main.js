@@ -5012,6 +5012,7 @@ function initializeEditorModeAndSpatialPreview() {
     document.getElementById('spatial-preview-btn')?.addEventListener('click', () => openSpatialPreview());
     document.getElementById('spatial-preview-close')?.addEventListener('click', () => closeSpatialPreview());
     document.getElementById('btn-phone-pair')?.addEventListener('click', () => openPhonePairing());
+    document.getElementById('phone-pair-cancel')?.addEventListener('click', () => closePhonePairing());
 }
 
 // ===== PHONE BRIDGE =====
