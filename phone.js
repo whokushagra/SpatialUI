@@ -121,6 +121,10 @@ async function onPhonePeerConnected() {
     }));
     if (xrSupported) {
         await startWebXrMode();
+    } else {
+        // iOS / unsupported browser — 3DoF orientation mode.
+        const badge = document.getElementById('ios-mode-badge');
+        if (badge) badge.style.display = 'inline-block';
     }
     startOrientationLoop();
     startTapHandler();
