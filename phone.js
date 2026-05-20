@@ -401,19 +401,42 @@ async function startWebXrMode() {
     }
 }
 
-function startXrPoseLoop() {
-    const session = phoneState.xrSession;
-    if (!session) return;
-    session.requestAnimationFrame(function onXrFrame(_t, frame) {
-        const refSpace = phoneState.xrRefSpace;
-        const viewerPose = frame.getViewerPose(refSpace);
-        if (viewerPose && phonePeer) {
-            const m = new Float32Array(viewerPose.transform.matrix);
-            phonePeer.sendPoseStream(encodeXrPose(m, performance.now()));
+function onXrFrame(timestamp, frame) {
+    if (!frame) {
+        // Non-XR frame — regular render (camera rotation from device orientation handles itself).
+        phoneState.threeRenderer.render(phoneState.threeScene, phoneState.threeCamera);
+        return;
+    }
+
+    const refSpace = phoneState.xrRefSpace;
+    if (!refSpace) return;
+
+    // Update reticle from hit-test.
+    if (phoneState.xrHitTest && phoneState.reticle) {
+        const hits = frame.getHitTestResults(phoneState.xrHitTest);
+        if (hits.length > 0) {
+            const hitPose = hits[0].getPose(refSpace);
+            phoneState.reticle.visible = true;
+            phoneState.reticle.matrix.fromArray(hitPose.transform.matrix);
+        } else {
+            phoneState.reticle.visible = false;
         }
-        if (phoneState.xrSession === session) session.requestAnimationFrame(onXrFrame);
-    });
+    }
+
+    // Stream viewer pose to desktop at ~20 Hz (WebXRManager may call this at 60+ fps).
+    const now = performance.now();
+    if (phonePeer && now - (onXrFrame._lastPoseSend ?? 0) > 50) {
+        const viewerPose = frame.getViewerPose(refSpace);
+        if (viewerPose) {
+            phonePeer.sendPoseStream(encodeXrPose(new Float32Array(viewerPose.transform.matrix), now));
+        }
+        onXrFrame._lastPoseSend = now;
+    }
+
+    // Three.js render — WebXRManager applies the XR camera pose before this call.
+    phoneState.threeRenderer.render(phoneState.threeScene, phoneState.threeCamera);
 }
+onXrFrame._lastPoseSend = 0;
 
 let phoneMode = 'edit';
 
