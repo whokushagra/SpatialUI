@@ -438,6 +438,31 @@ function onXrFrame(timestamp, frame) {
 }
 onXrFrame._lastPoseSend = 0;
 
+function onXrSelect() {
+    if (phoneState.scenePlaced) return;           // already placed — ignore until Reset
+    if (!phoneState.reticle?.visible) return;     // no surface detected yet
+
+    const pos = new THREE.Vector3().setFromMatrixPosition(phoneState.reticle.matrix);
+    if (phoneState.snapshotRoot) {
+        phoneState.snapshotRoot.position.copy(pos);
+        phoneState.snapshotRoot.visible = true;
+    }
+    phoneState.scenePlaced = true;
+    showArControls();
+}
+
+function resetArPlacement() {
+    phoneState.scenePlaced = false;
+    if (phoneState.snapshotRoot) phoneState.snapshotRoot.visible = false;
+    document.getElementById('ar-placement-hint').style.display = 'flex';
+    document.getElementById('ar-controls').style.display = 'none';
+}
+
+function showArControls() {
+    document.getElementById('ar-placement-hint').style.display = 'none';
+    document.getElementById('ar-controls').style.display = 'flex';
+}
+
 let phoneMode = 'edit';
 
 function startModeToggle() {
