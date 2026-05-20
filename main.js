@@ -2176,6 +2176,7 @@ function createObject(type) {
     mesh.userData.selectable = true;
     mesh.userData.screenId = state.activeScreenId;
     mesh.userData.voidType = 'primitive';
+    mesh.userData.voidId = mesh.uuid;
 
     const frame = resolveFrameForParenting();
     if (frame) {
@@ -2258,6 +2259,7 @@ function resolveFrameForParenting() {
 
 function addObjectToActiveScreen(object, defaultSpatial = null) {
     object.userData.screenId = state.activeScreenId;
+    if (!object.userData.voidId) object.userData.voidId = object.uuid;
     const frame = resolveFrameForParenting();
 
     if (frame) {
@@ -2290,6 +2292,7 @@ function createFrame(width, height, name = 'Frame') {
     group.userData.frameHeight = height;
     group.userData.frameLabel = name;
     group.userData.anchor = 'world';
+    group.userData.voidId = group.uuid;
 
     const fillMat = new THREE.MeshStandardMaterial({
         color: 0x0f172a,
