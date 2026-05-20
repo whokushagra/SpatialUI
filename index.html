@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
@@ -16,26 +17,51 @@
     <!-- Dummy onboarding (paper prototype): Login → Dashboard → existing editor unchanged inside #phase-editor -->
     <nav id="app-top-nav" class="app-top-nav" hidden aria-label="App navigation">
         <div class="app-top-nav-inner">
+            <canvas id="top-nav-stars-canvas" class="app-top-nav-stars" aria-hidden="true"></canvas>
             <span class="app-top-nav-brand" aria-hidden="true">Void</span>
             <div class="app-top-nav-actions">
-                <button type="button" class="icon-button theme-toggle-btn" data-theme-toggle aria-label="Switch to light theme" title="Switch theme">🌙</button>
                 <button type="button" class="app-top-nav-link" id="app-nav-dashboard">Dashboard</button>
             </div>
         </div>
     </nav>
 
     <section id="phase-login" class="onboarding-phase onboarding-login" aria-label="Login">
-        <div class="onboarding-card">
-            <div class="onboarding-logo" aria-hidden="true">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
-                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
-                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+        <div class="onboarding-card login-card-immersive" id="login-card">
+            <div class="onboarding-logo eclipse-logo-wrap" aria-hidden="true">
+                <svg class="eclipse-logo" viewBox="0 0 100 100" width="80" height="80">
+                    <defs>
+                        <radialGradient id="eclipseGlow" cx="50%" cy="50%" r="50%">
+                            <stop offset="55%" stop-color="transparent" />
+                            <stop offset="72%" stop-color="rgba(180,160,255,0.15)" />
+                            <stop offset="82%" stop-color="rgba(200,180,255,0.4)" />
+                            <stop offset="88%" stop-color="rgba(255,255,255,0.8)" />
+                            <stop offset="92%" stop-color="rgba(180,160,255,0.4)" />
+                            <stop offset="100%" stop-color="transparent" />
+                        </radialGradient>
+                        <filter id="glow">
+                            <feGaussianBlur stdDeviation="1.5" result="blur" />
+                            <feMerge>
+                                <feMergeNode in="blur" />
+                                <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                        </filter>
+                    </defs>
+                    <line x1="10" y1="20" x2="35" y2="25" stroke="rgba(255,255,255,0.15)" stroke-width="0.5" />
+                    <line x1="65" y1="75" x2="90" y2="78" stroke="rgba(255,255,255,0.1)" stroke-width="0.3" />
+                    <line x1="15" y1="65" x2="32" y2="68" stroke="rgba(255,255,255,0.12)" stroke-width="0.4" />
+                    <line x1="70" y1="22" x2="88" y2="18" stroke="rgba(255,255,255,0.1)" stroke-width="0.3" />
+                    <circle cx="50" cy="50" r="32" fill="url(#eclipseGlow)" filter="url(#glow)" />
+                    <circle cx="50" cy="50" r="28" fill="#000000" />
                 </svg>
             </div>
-            <h1 class="onboarding-title">Void</h1>
-            <p class="onboarding-subtitle">Welcome to Void</p>
-            <button type="button" class="btn-primary onboarding-primary-btn" id="btn-onboarding-login">Log In</button>
+            <h1 class="onboarding-title">VOID</h1>
+            <p class="onboarding-subtitle">Designer-first XR UI platform</p>
+            <div class="login-form">
+                <input class="login-input" type="email" placeholder="Email" autocomplete="email">
+                <input class="login-input" type="password" placeholder="Password" autocomplete="current-password">
+                <button type="button" class="btn-primary onboarding-primary-btn" id="btn-onboarding-login">Log In</button>
+                <button type="button" class="login-guest-link" id="btn-onboarding-guest">Continue as guest →</button>
+            </div>
         </div>
     </section>
 
@@ -52,11 +78,57 @@
             <h2 class="dashboard-heading">My Projects</h2>
         </header>
         <div class="dashboard-body">
-            <ul class="dashboard-project-list" aria-label="Dummy projects">
-                <li class="dashboard-project-card"><span class="dashboard-project-name">Meditation App</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
-                <li class="dashboard-project-card"><span class="dashboard-project-name">Product Demo</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
-                <li class="dashboard-project-card"><span class="dashboard-project-name">XR Workshop</span><span class="dashboard-project-meta">Last edited · dummy</span></li>
-            </ul>
+            <h3 class="dashboard-section-title">Recent Projects</h3>
+            <div class="dashboard-project-grid" aria-label="Projects">
+                <article class="dashboard-project-card dashboard-project-card--new" id="dashboard-new-project-card">
+                    <div class="dashboard-card-thumb">
+                        <i data-lucide="plus"></i>
+                    </div>
+                    <div class="dashboard-card-info">
+                        <span class="dashboard-project-name">New Project</span>
+                        <span class="dashboard-project-meta">Create a new XR canvas</span>
+                    </div>
+                </article>
+                <article class="dashboard-project-card">
+                    <div class="dashboard-card-thumb dashboard-card-thumb--pattern">
+                        <svg class="dashboard-card-thumb-logo" viewBox="0 0 100 100" width="40" height="40" aria-hidden="true">
+                            <circle cx="50" cy="50" r="32" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.32" />
+                            <circle cx="50" cy="50" r="28" fill="currentColor" opacity="0.15" />
+                        </svg>
+                    </div>
+                    <div class="dashboard-card-info">
+                        <span class="dashboard-project-name">Meditation App</span>
+                        <span class="dashboard-project-meta">Last edited · 2h ago</span>
+                        <span class="dashboard-device-tag">Meta Quest 3</span>
+                    </div>
+                </article>
+                <article class="dashboard-project-card">
+                    <div class="dashboard-card-thumb dashboard-card-thumb--pattern">
+                        <svg class="dashboard-card-thumb-logo" viewBox="0 0 100 100" width="40" height="40" aria-hidden="true">
+                            <circle cx="50" cy="50" r="32" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.32" />
+                            <circle cx="50" cy="50" r="28" fill="currentColor" opacity="0.15" />
+                        </svg>
+                    </div>
+                    <div class="dashboard-card-info">
+                        <span class="dashboard-project-name">Product Demo</span>
+                        <span class="dashboard-project-meta">Last edited · Yesterday</span>
+                        <span class="dashboard-device-tag">Vision Pro</span>
+                    </div>
+                </article>
+                <article class="dashboard-project-card">
+                    <div class="dashboard-card-thumb dashboard-card-thumb--pattern">
+                        <svg class="dashboard-card-thumb-logo" viewBox="0 0 100 100" width="40" height="40" aria-hidden="true">
+                            <circle cx="50" cy="50" r="32" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.32" />
+                            <circle cx="50" cy="50" r="28" fill="currentColor" opacity="0.15" />
+                        </svg>
+                    </div>
+                    <div class="dashboard-card-info">
+                        <span class="dashboard-project-name">XR Workshop</span>
+                        <span class="dashboard-project-meta">Last edited · 3d ago</span>
+                        <span class="dashboard-device-tag">Meta Quest 3</span>
+                    </div>
+                </article>
+            </div>
             <button type="button" class="btn-primary dashboard-create-btn" id="btn-onboarding-create-project">Create New Project</button>
         </div>
     </section>
@@ -66,11 +138,28 @@
     <div class="app-container">
         <!-- Top Menu Bar -->
         <div class="menu-bar">
-            <div class="menu-logo">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
-                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
-                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+            <div class="menu-logo menu-logo-with-eclipse">
+                <svg class="menu-logo-eclipse" viewBox="0 0 100 100" width="24" height="24"
+                    aria-hidden="true" style="display:inline-block; vertical-align:middle">
+                    <defs>
+                        <radialGradient id="editorEclipseGlow" cx="50%" cy="50%" r="50%">
+                            <stop offset="55%" stop-color="transparent"/>
+                            <stop offset="72%" stop-color="rgba(180,160,255,0.15)"/>
+                            <stop offset="82%" stop-color="rgba(200,180,255,0.4)"/>
+                            <stop offset="88%" stop-color="rgba(255,255,255,0.8)"/>
+                            <stop offset="92%" stop-color="rgba(180,160,255,0.4)"/>
+                            <stop offset="100%" stop-color="transparent"/>
+                        </radialGradient>
+                        <filter id="editorGlow">
+                            <feGaussianBlur stdDeviation="1.5" result="blur"/>
+                            <feMerge>
+                                <feMergeNode in="blur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+                    <circle cx="50" cy="50" r="32" fill="url(#editorEclipseGlow)" filter="url(#editorGlow)"/>
+                    <circle cx="50" cy="50" r="28" fill="#000000"/>
                 </svg>
                 <span class="logo-text">Void</span>
             </div>
@@ -91,25 +180,22 @@
                 <div class="menu-item">Object</div>
                 <div class="menu-item menu-item-highlight">Spatial</div>
                 <div class="menu-item">Plugins</div>
-                <div class="menu-item">Help</div>
+                <div class="menu-item">Help
+                    <div class="menu-dropdown">
+                        <div class="menu-option" id="menu-restart-tutorial">Restart tutorial…</div>
+                    </div>
+                </div>
             </nav>
             <div class="menu-actions">
-                <button type="button" class="icon-button theme-toggle-btn" data-theme-toggle aria-label="Switch to light theme" title="Switch theme">🌙</button>
+                <button type="button" class="icon-button theme-toggle-btn" data-theme-toggle aria-label="Toggle dark/light mode" title="Toggle dark/light mode" data-tooltip="Toggle dark/light mode"><i data-lucide="moon"></i></button>
                 <!-- Prominent Design ↔ Prototype (Play) toggle — same bar as Spatial Preview & device preview -->
                 <div class="editor-mode-toggle editor-mode-toggle--prominent" role="group" aria-label="Design Mode or Prototype Mode">
                     <button type="button" class="mode-pill active" id="btn-mode-design" aria-pressed="true" title="Edit layout, layers, and properties">Design Mode</button>
-                    <button type="button" class="mode-pill" id="btn-mode-prototype" aria-pressed="false" title="Play prototype — buttons jump to linked screens">Prototype Mode</button>
+                    <button type="button" class="mode-pill" id="prototype-mode-btn" aria-pressed="false" title="Play prototype — buttons jump to linked screens">Prototype Mode</button>
                 </div>
-                <button type="button" class="icon-button" id="btn-spatial-preview" title="Preview in Space — AR over device camera"><i data-lucide="camera"></i></button>
-                <button class="icon-button" title="Share">
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path
-                            d="M13 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM3 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM13 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"
-                            stroke="currentColor" stroke-width="1.5" />
-                        <path d="M4.5 8.5l7-3M4.5 7.5l7 3" stroke="currentColor" stroke-width="1.5" />
-                    </svg>
-                </button>
-                <button class="btn-primary">Preview on Device</button>
+                <button type="button" class="icon-button" id="spatial-preview-btn" title="Preview in space" data-tooltip="Preview in space"><i data-lucide="camera"></i></button>
+                <button class="icon-button" title="Share project" data-tooltip="Share project"><i data-lucide="share-2"></i></button>
+                <button class="btn-primary" data-tooltip="Export project">Preview on Device</button>
             </div>
         </div>
 
@@ -120,23 +206,19 @@
                 <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="layers" title="Layers">
                         <i data-lucide="layers"></i>
-                        <span class="tab-label">Layers</span>
+                        <span class="tab-label sidebar-tab-text">Layers</span>
                     </button>
                     <button class="sidebar-tab" data-tab="assets" title="Assets">
                         <i data-lucide="component"></i>
-                        <span class="tab-label">Assets</span>
-                    </button>
-                    <button class="sidebar-tab" data-tab="colors" title="Colors">
-                        <i data-lucide="palette"></i>
-                        <span class="tab-label">Colors</span>
+                        <span class="tab-label sidebar-tab-text">Assets</span>
                     </button>
                     <button class="sidebar-tab" data-tab="screens" title="Screens">
                         <i data-lucide="monitor"></i>
-                        <span class="tab-label">Screens</span>
+                        <span class="tab-label sidebar-tab-text">Screens</span>
                     </button>
-                    <button class="sidebar-tab" data-tab="environments" title="Environments">
+                    <button class="sidebar-tab" data-tab="environments" title="Environment presets">
                         <i data-lucide="image"></i>
-                        <span class="tab-label">Environments</span>
+                        <span class="tab-label sidebar-tab-text">Environ</span>
                     </button>
                 </div>
 
@@ -155,7 +237,7 @@
                     <div class="tab-content" id="assets-tab">
                         <div class="tab-header">
                             <h3>Components</h3>
-                            <button class="icon-button">+</button>
+                            <button class="icon-button" data-tooltip="Add component"><i data-lucide="plus"></i></button>
                         </div>
                         <div class="assets-grid" id="assets-components">
                             <div class="asset-card" data-component="button" title="Add Button">
@@ -197,25 +279,11 @@
                         </div>
                     </div>
 
-                    <!-- Colors Tab Content -->
-                    <div class="tab-content" id="colors-tab">
-                        <div class="tab-header">
-                            <h3>Color Palette</h3>
-                        </div>
-                        <div class="color-swatches">
-                            <div class="color-swatch" style="background: #6366f1;"></div>
-                            <div class="color-swatch" style="background: #8b5cf6;"></div>
-                            <div class="color-swatch" style="background: #ec4899;"></div>
-                            <div class="color-swatch" style="background: #f59e0b;"></div>
-                            <div class="color-swatch" style="background: #10b981;"></div>
-                        </div>
-                    </div>
-
                     <!-- Screens Tab Content -->
                     <div class="tab-content" id="screens-tab">
                         <div class="tab-header">
                             <h3>Screens</h3>
-                            <button type="button" class="icon-button" id="btn-add-screen" title="New screen">+</button>
+                            <button type="button" class="icon-button" id="btn-add-screen" title="New screen" data-tooltip="New screen"><i data-lucide="plus"></i></button>
                         </div>
                         <p class="tab-hint" style="font-size: 12px; color: var(--color-text-muted); margin: 0 0 8px 0;">Each screen is its own layout. Switch screens to edit them.</p>
                         <div class="pages-list" id="screens-list"></div>
@@ -247,32 +315,39 @@
                             <option>Apple Vision Pro</option>
                             <option>Generic XR</option>
                         </select>
+                        <div class="viewport-component-shortcuts">
+                            <button type="button" class="topbar-ghost-btn" id="topbar-add-button" title="Add Button component" data-tooltip="Add Button component">
+                                <i data-lucide="square"></i><span>Add Button</span>
+                            </button>
+                            <button type="button" class="topbar-ghost-btn" id="topbar-add-panel" title="Add Panel component" data-tooltip="Add Panel component">
+                                <i data-lucide="layout"></i><span>Add Panel</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="viewport-controls">
-                        <button type="button" class="icon-button" data-view-preset="top" title="Top View"><i data-lucide="arrow-up"></i></button>
-                        <button type="button" class="icon-button" data-view-preset="front" title="Front View"><i data-lucide="arrow-right"></i></button>
-                        <button type="button" class="icon-button" data-view-preset="side" title="Side View"><i data-lucide="arrow-up-right"></i></button>
-                        <button type="button" class="icon-button active" data-view-preset="isometric" title="Isometric"><i data-lucide="box"></i></button>
+                        <button type="button" class="icon-button" data-view-preset="top" title="Top View" data-tooltip="Top view"><i data-lucide="arrow-up"></i></button>
+                        <button type="button" class="icon-button" data-view-preset="front" title="Front View" data-tooltip="Front view"><i data-lucide="arrow-right"></i></button>
+                        <button type="button" class="icon-button" data-view-preset="side" title="Side View" data-tooltip="Side view"><i data-lucide="arrow-up-right"></i></button>
+                        <button type="button" class="icon-button active" data-view-preset="isometric" title="Isometric" data-tooltip="Isometric view"><i data-lucide="box"></i></button>
                         <div class="control-divider"></div>
-                        <button type="button" class="icon-button" id="btn-view-mode-toggle" title="Toggle 2D/3D view"><i data-lucide="layout-dashboard"></i></button>
+                        <button type="button" class="icon-button" id="btn-view-mode-toggle" title="Switch to 3D mode" data-tooltip="Switch to 3D mode"><i data-lucide="layout-dashboard"></i></button>
                         <div class="control-divider"></div>
-                        <button type="button" class="icon-button active" id="viewport-toggle-grid" title="Toggle Floor/Grid" aria-pressed="true"><i data-lucide="grid-3x3"></i></button>
-                        <label class="canvas-color-control" title="Canvas color">
-                            <input type="color" id="canvas-color-picker" value="#0d0d0d">
-                        </label>
-                        <button type="button" class="icon-button" id="canvas-color-reset" title="Reset canvas color"><i data-lucide="rotate-ccw"></i></button>
-                        <button type="button" class="icon-button" id="viewport-toggle-safe" title="Toggle Safe Zone">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                <rect x="3" y="3" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5"
-                                    stroke-dasharray="2 2" />
-                            </svg>
-                        </button>
+                        <div class="canvas-color-btn" id="canvas-color-btn" data-tooltip="Canvas background color" style="position: relative">
+                            <div id="canvas-color-swatch" class="canvas-color-swatch" style="width: 18px; height: 18px; border-radius: 4px; background: #141414; border: 1.5px solid rgba(255,255,255,0.25); cursor: pointer; box-sizing: border-box;" aria-hidden="true"></div>
+                            <input type="color" id="canvas-color-input" value="#141414" style="position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; padding: 0; border: none;">
+                        </div>
+                        <button type="button" class="icon-button" id="canvas-color-reset" title="Reset canvas color" data-tooltip="Reset canvas color"><i data-lucide="rotate-ccw"></i></button>
                     </div>
                 </div>
 
                 <!-- touch-action:none keeps pointer drag (Figma-style 2D / spatial preview) working on mobile -->
                 <div class="viewport" id="viewport-3d" style="touch-action: none;">
                     <div class="viewport-mode-badge" id="viewport-mode-badge">3D</div>
+                    <div class="canvas-empty-state" id="canvas-empty-state" aria-live="polite">
+                        <i data-lucide="plus-square"></i>
+                        <h3>Start designing</h3>
+                        <p>Add a frame from the Assets panel to begin</p>
+                    </div>
                     <!-- Floating exit — visible only in Prototype Mode (see setEditorMode in main.js) -->
                     <button type="button" class="btn-secondary prototype-exit-floating" id="btn-exit-prototype"
                         style="display: none;" aria-hidden="true" title="Stop prototype and return to Design Mode">Exit Prototype</button>
@@ -306,7 +381,7 @@
             </div>
 
             <!-- Right Sidebar - Properties Panel -->
-            <div class="sidebar sidebar-right">
+            <div class="sidebar sidebar-right" id="properties-panel">
                 <div class="sidebar-header">
                     <h3>Properties</h3>
                 </div>
@@ -324,7 +399,7 @@
                     <div class="properties-sections" style="display: none;">
                         <div class="property-section">
                             <div class="property-section-header">
-                                <span>Spatial (XR)</span>
+                                <span class="property-section-spatial-heading">Spatial (XR)</span>
                                 <button class="collapse-btn">−</button>
                             </div>
                             <div class="property-section-content">
@@ -484,7 +559,7 @@
                             </div>
                             <div class="property-section-content" id="interaction-section-inner">
                                 <p class="interaction-hint" id="interaction-hint" style="font-size: 11px; color: var(--color-text-muted); margin: 0 0 8px 0; line-height: 1.4;">
-                                    Switch to Prototype mode and drag from the <strong>→</strong> handle on the canvas to connect.
+                                    Select a target screen and transition to define click behavior.
                                 </p>
                                 <div class="interaction-fields" id="interaction-fields">
                                 <div class="property-group" id="button-link-group">
@@ -506,7 +581,7 @@
                                 </div>
                                 <div class="property-group">
                                     <label for="proto-transition-duration">Duration (ms)</label>
-                                    <input type="number" id="proto-transition-duration" class="text-prop-input" min="0" max="10000" step="50" value="300">
+                                    <input type="number" id="proto-transition-duration" class="text-prop-input" min="0" max="2000" step="50" value="300">
                                 </div>
                                 <div class="property-group">
                                     <label for="proto-transition-easing">Easing</label>
@@ -541,6 +616,10 @@
                                 <button class="collapse-btn">−</button>
                             </div>
                             <div class="property-section-content">
+                                <div class="property-group" id="image-source-group" style="display: none;">
+                                    <button type="button" class="btn-secondary" id="btn-change-image" style="width: 100%;">Change image</button>
+                                </div>
+
                                 <div class="property-group">
                                     <label>Color</label>
                                     <div class="color-picker-wrapper">
@@ -668,45 +747,24 @@
         </div>
 
         <!-- Bottom Toolbar -->
-        <div class="toolbar">
+        <div class="toolbar" id="floating-toolbar">
             <div class="toolbar-tools">
                 <button class="tool-button active" title="Select (V)" data-tool="select"><i data-lucide="mouse-pointer-2"></i></button>
                 <button class="tool-button" title="Frame (F)" data-tool="frame"><i data-lucide="square"></i></button>
-                <button class="tool-button" title="Text (T)" data-tool="text"><i data-lucide="type"></i></button>
-                <button class="tool-button" title="Shape (R)" data-tool="shape">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <circle cx="10" cy="10" r="6" stroke="currentColor" stroke-width="1.5" fill="none" />
-                    </svg>
-                </button>
-                <button class="tool-button" title="3D Box (B)" data-tool="box"><i data-lucide="box"></i></button>
-                <button class="tool-button" title="Image (I)" data-tool="image">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5"
-                            fill="none" />
-                        <circle cx="7" cy="7" r="1.5" fill="currentColor" />
-                        <path d="M3 14l4-4 2 2 4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none" />
-                    </svg>
-                </button>
+                <button class="tool-button" id="tool-text" title="Text (T)" data-tool="text"><i data-lucide="type"></i></button>
                 <div class="toolbar-divider"></div>
-                <button class="tool-button" title="Comment (C)" data-tool="comment">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M17 7v6a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h10a2 2 0 012 2v2z" stroke="currentColor"
-                            stroke-width="1.5" fill="none" />
-                    </svg>
-                </button>
-                <button class="tool-button" title="Measure" data-tool="measure">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M3 17L17 3M5 17l2-2M9 17l2-2M13 17l2-2M3 13l2-2M3 9l2-2M3 5l2-2" stroke="currentColor"
-                            stroke-width="1.5" />
-                    </svg>
-                </button>
+                <button type="button" class="icon-button active" id="toolbar-view-mode-2d" title="Switch to 2D mode" data-tooltip="Switch to 2D mode" aria-pressed="true"><i data-lucide="layout-dashboard"></i></button>
+                <button type="button" class="icon-button" id="toolbar-view-mode-3d" title="Switch to 3D mode" data-tooltip="Switch to 3D mode" aria-pressed="false"><i data-lucide="box"></i></button>
+                <div class="toolbar-divider"></div>
+                <button type="button" class="icon-button is-off" id="viewport-toggle-grid" title="Toggle floor grid" data-tooltip="Toggle floor grid" aria-pressed="false"><i data-lucide="grid-3x3"></i></button>
+                <button type="button" class="icon-button active" id="viewport-toggle-safe" title="Toggle safe zone" data-tooltip="Toggle safe zone" aria-pressed="true"><i data-lucide="scan"></i></button>
             </div>
 
             <div class="toolbar-info">
                 <div class="zoom-control">
-                    <button class="icon-button">−</button>
+                    <button class="icon-button" data-tooltip="Zoom out"><i data-lucide="minus"></i></button>
                     <span>100%</span>
-                    <button class="icon-button">+</button>
+                    <button class="icon-button" data-tooltip="Zoom in"><i data-lucide="plus"></i></button>
                 </div>
             </div>
         </div>

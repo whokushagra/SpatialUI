@@ -5,6 +5,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
+import { initLoginScene, disposeLoginScene } from './loginScene.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -29,11 +30,13 @@ const state = {
     mouse: null,
     objects: [],
     selectableObjects: [],
+    editorStars: null,
     lights: null,
-    viewMode: '3d',
+    viewMode: '2d',
     lastFrameSize: { width: 1.2, height: 0.8 },
     grid2d: null,
     controls3DDefaults: null,
+    safeZoneVisible: true,
     /** 'design' = edit / select; 'prototype' = Play Mode — buttons navigate via onClickScreenId */
     editorMode: 'design',
     /** Active screen when user entered Prototype Mode; restored when returning to Design Mode */
@@ -61,7 +64,8 @@ const state = {
     environmentLoading: false,
     defaultEditorBackground: null,
     environmentLoadRequestId: 0,
-    floorVisible: true,
+    /** Floor / 2D design grid visibility (synonym for legacy “gridVisible”). */
+    floorVisible: false,
     /**
      * Figma-style canvas drag (2D ortho + Spatial Preview): move / corner-resize without TransformControls gizmo.
      * @type {null | object}
@@ -82,11 +86,12 @@ const state = {
      */
     appPhase: 'login',
     editorExperienceInitialized: false,
-    /** Figma-style prototype drag + HTML overlay (Prototype mode) */
+    /** Drag-link prototype overlay removed (dropdown-only interactions). */
     prototypeLinkDrag: null,
     prototypeHoverRoot: null,
     /** @type {null | { t0: number, duration: number, easing: string, type: string, toGroup: THREE.Object3D, fromGroup: THREE.Object3D | null, fromPos0: THREE.Vector3, toPos0: THREE.Vector3, dFrom: THREE.Vector3, dTo: THREE.Vector3, data: object, targetId: string, phase: 'dual' | 'toOnly' } } */
     prototypeScreenNavJob: null,
+    viewModeEnvVisibilityBackup: null,
     _protoNavTmpVec: new THREE.Vector3(),
     /** @type {null | { wrap: HTMLElement, canvas: HTMLCanvasElement, handle: HTMLButtonElement, ctx: CanvasRenderingContext2D, deletes: HTMLElement, dpr: number }} */
     prototypeLinkUI: null
@@ -99,6 +104,94 @@ const _protoProj = new THREE.Vector3();
 
 const THEME_STORAGE_KEY = 'void-theme';
 
+function isDarkTheme() {
+    return document.documentElement.getAttribute('data-theme') !== 'light';
+}
+
+function getEditorCanvasHex(mode = state.viewMode) {
+    if (mode === '3d') return isDarkTheme() ? '#0d0d0d' : '#e8e8e8';
+    return isDarkTheme() ? '#141414' : '#f0f0f0';
+}
+
+function addSubtleStarField() {
+    if (!state.scene || state.editorStars) return state.editorStars;
+    const geometry = new THREE.BufferGeometry();
+    const count = 800;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 200;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 200;
+        positions[i * 3 + 2] = -50 - Math.random() * 100;
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 0.04,
+        transparent: true,
+        opacity: 0.18,
+        sizeAttenuation: true
+    });
+    const starField = new THREE.Points(geometry, material);
+    starField.userData.isEditorStars = true;
+    starField.userData.isEnvironment = true;
+    state.scene.add(starField);
+    state.editorStars = starField;
+    return starField;
+}
+
+function updateCanvasColorSwatchUi(hex) {
+    const input = document.getElementById('canvas-color-input');
+    const swatch = document.getElementById('canvas-color-swatch');
+    if (input) input.value = hex;
+    if (swatch) swatch.style.backgroundColor = hex;
+}
+
+function syncEditorThemeCanvas() {
+    const viewport = document.getElementById('viewport-3d');
+    const hex = getEditorCanvasHex(state.viewMode);
+    updateCanvasColorSwatchUi(hex);
+    if (viewport) viewport.style.background = hex;
+    if (state.renderer) state.renderer.setClearColor(new THREE.Color(hex), 1);
+    if (state.scene && !state.activeEnvironmentPresetId && state.viewMode === '3d') {
+        state.scene.background = new THREE.Color(hex);
+    }
+    if (!state.scene) return;
+    if (isDarkTheme()) {
+        const stars = addSubtleStarField();
+        if (stars) stars.visible = true;
+    } else if (state.editorStars) {
+        state.editorStars.visible = false;
+    }
+}
+
+function snapshotEnvironmentVisibilityForViewMode() {
+    if (!state.scene) return;
+    const backup = [];
+    state.scene.traverse((obj) => {
+        if (!obj.userData?.isEnvironment) return;
+        if (obj.userData?.isEditorStars) return;
+        backup.push({ object: obj, visible: obj.visible });
+    });
+    state.viewModeEnvVisibilityBackup = backup;
+}
+
+function forceHideEnvironmentForTwoD() {
+    if (!state.scene) return;
+    state.scene.traverse((obj) => {
+        if (!obj.userData?.isEnvironment) return;
+        if (obj.userData?.isEditorStars) return;
+        obj.visible = false;
+    });
+}
+
+function restoreEnvironmentVisibilityForThreeD() {
+    const backup = state.viewModeEnvVisibilityBackup;
+    if (!backup || !backup.length) return;
+    backup.forEach((entry) => {
+        if (entry.object) entry.object.visible = entry.visible;
+    });
+}
+
 function applyTheme(theme) {
     const next = theme === 'light' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
@@ -109,10 +202,13 @@ function applyTheme(theme) {
     const toggles = document.querySelectorAll('[data-theme-toggle]');
     const isLight = next === 'light';
     toggles.forEach((btn) => {
-        btn.textContent = isLight ? '☀️' : '🌙';
-        btn.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme');
-        btn.setAttribute('title', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+        btn.innerHTML = `<i data-lucide="${isLight ? 'moon' : 'sun'}"></i>`;
+        btn.setAttribute('aria-label', 'Toggle theme');
+        btn.setAttribute('title', 'Toggle theme');
+        btn.setAttribute('data-tooltip', 'Toggle theme');
     });
+    initializeLucideIcons();
+    syncEditorThemeCanvas();
 }
 
 function initializeThemeToggle() {
@@ -135,6 +231,46 @@ function initializeThemeToggle() {
 function initializeLucideIcons() {
     if (!window.lucide?.createIcons) return;
     window.lucide.createIcons();
+}
+
+function pulseViewportModeTransition() {
+    const viewport = document.getElementById('viewport-3d');
+    if (!viewport) return;
+    viewport.classList.remove('mode-switch-pulse');
+    void viewport.offsetWidth;
+    viewport.classList.add('mode-switch-pulse');
+}
+
+function applyGlobalTooltips() {
+    const explicit = {
+        'spatial-preview-btn': 'Preview in space',
+        'prototype-mode-btn': 'Prototype mode',
+        'viewport-toggle-grid': 'Toggle floor grid',
+        'viewport-toggle-safe': 'Toggle safe zone',
+        'btn-view-mode-toggle': state.viewMode === '2d' ? 'Switch to 3D mode' : 'Switch to 2D mode',
+        'menu-save-void': 'Save project',
+        'menu-export': 'Export project',
+        'canvas-color-btn': 'Canvas background color',
+        'toolbar-view-mode-2d': 'Switch to 2D mode',
+        'toolbar-view-mode-3d': 'Switch to 3D mode',
+        'topbar-add-button': 'Add Button component',
+        'topbar-add-panel': 'Add Panel component'
+    };
+    Object.entries(explicit).forEach(([id, label]) => {
+        const el = document.getElementById(id);
+        if (el) el.setAttribute('data-tooltip', label);
+    });
+
+    document.querySelectorAll('.icon-button, .tool-button, .sidebar-tab').forEach((el) => {
+        if (!el.getAttribute('data-tooltip')) {
+            const label =
+                el.getAttribute('title') ||
+                el.getAttribute('aria-label') ||
+                el.querySelector('.tab-label')?.textContent?.trim() ||
+                el.textContent?.trim();
+            if (label) el.setAttribute('data-tooltip', label);
+        }
+    });
 }
 
 function initializePropertySectionIcons() {
@@ -353,7 +489,7 @@ function mapLegacyClickAnimationToTransition(clickAnimation) {
 function ensureInteractionUserData(u) {
     if (!u) return;
     if (u.onClickScreenId === undefined) u.onClickScreenId = '';
-    if (!u.transitionType) u.transitionType = mapLegacyClickAnimationToTransition(u.clickAnimation);
+    if (!u.transitionType) u.transitionType = 'fade';
     if (u.transitionDuration == null || !Number.isFinite(Number(u.transitionDuration))) u.transitionDuration = 300;
     if (!u.transitionEasing) u.transitionEasing = 'ease-in-out';
     if (u.prototypeLinkTargetUuid === undefined) u.prototypeLinkTargetUuid = '';
@@ -385,21 +521,34 @@ function refreshLayersPanel() {
         const row = document.createElement('div');
         row.className = 'layer-item';
         const icon = layerIconFor(obj);
-        row.innerHTML = `<span class="layer-icon">${icon}</span><span class="layer-name">${escapeHtml(obj.name)}</span>`;
+        row.innerHTML = `<span class="layer-icon"><i data-lucide="${icon}"></i></span><span class="layer-name">${escapeHtml(obj.name)}</span>`;
         row.dataset.objectUuid = obj.uuid;
         tree.appendChild(row);
     });
+    initializeLucideIcons();
+    updateViewportEmptyState();
 }
 
 function layerIconFor(obj) {
     const t = obj.userData.voidType;
-    if (t === 'button') return '🔘';
-    if (t === 'panel') return '▢';
-    if (t === 'text') return '📝';
-    if (t === 'image') return '🖼';
-    if (t === 'frame') return '▭';
-    if (obj.userData.isLight) return '💡';
-    return '📦';
+    if (t === 'button') return 'circle-dot';
+    if (t === 'panel') return 'rectangle-horizontal';
+    if (t === 'text') return 'type';
+    if (t === 'image') return 'image';
+    if (t === 'frame') return 'square';
+    if (obj.userData.isLight) return 'lightbulb';
+    return 'box';
+}
+
+function updateViewportEmptyState() {
+    const empty = document.getElementById('canvas-empty-state');
+    if (!empty) return;
+    const designItems = state.objects.filter((o) => {
+        if (!o?.userData || o.userData.isEnvironment) return false;
+        const t = o.userData.voidType;
+        return t === 'frame' || t === 'button' || t === 'panel' || t === 'text' || t === 'image';
+    });
+    empty.classList.toggle('is-visible', designItems.length === 0);
 }
 
 function populateButtonLinkDropdown() {
@@ -451,7 +600,7 @@ function updateInteractionPanel(object) {
     const leg = document.getElementById('button-click-animation');
     const rem = document.getElementById('btn-remove-proto-link');
 
-    if (typ) typ.value = u.transitionType || 'instant';
+    if (typ) typ.value = u.transitionType || 'fade';
     if (dur) dur.value = String(u.transitionDuration ?? 300);
     if (eas) eas.value = u.transitionEasing || 'ease-in-out';
     if (leg) leg.value = u.clickAnimation || 'none';
@@ -514,7 +663,7 @@ function initialize3DViewport() {
 
     // Create Scene
     state.scene = new THREE.Scene();
-    state.scene.background = new THREE.Color(0x0f0f0f);
+    state.scene.background = new THREE.Color(getEditorCanvasHex());
     state.defaultEditorBackground = state.scene.background;
 
     // Cameras: perspective (3D) + orthographic (flat 2D / Figma-like)
@@ -536,8 +685,9 @@ function initialize3DViewport() {
     state.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     state.renderer.toneMappingExposure = 1.0;
     state.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    state.renderer.setClearColor(0x000000, 1);
+    state.renderer.setClearColor(new THREE.Color(getEditorCanvasHex()), 1);
     viewportElement.appendChild(state.renderer.domElement);
+    viewportElement.style.background = getEditorCanvasHex();
 
     // Track pointer for “frame under cursor” parenting when placing components
     state.renderer.domElement.addEventListener('pointermove', (e) => {
@@ -610,17 +760,16 @@ function initialize3DViewport() {
 
     // Add Grid Helper
     createGrid();
+    if (isDarkTheme()) addSubtleStarField();
 
     // Add Safe Zone
     createSafeZone();
 
     ensureDefaultScreen();
 
-    // Add Sample 3D Objects (into active screen group)
-    addSampleObjects();
     applyFloorVisibility();
 
-    initPrototypeLinkOverlay(viewportElement);
+    // Drag-to-connect overlay removed; dropdown interaction system only.
 
     // Add Axes Helper
     const axesHelper = new THREE.AxesHelper(2);
@@ -637,11 +786,26 @@ function initialize3DViewport() {
 }
 
 // ===== CREATE GRID =====
+function styleMainViewportGrid(gridHelper) {
+    if (!gridHelper || !gridHelper.material) return;
+    const mats = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
+    if (mats[0]) {
+        mats[0].color.set(0x333333);
+        mats[0].transparent = true;
+        mats[0].opacity = 0.6;
+    }
+    if (mats[1]) {
+        mats[1].color.set(0x222222);
+        mats[1].transparent = true;
+        mats[1].opacity = 0.4;
+    }
+}
+
 function createGrid() {
-    const gridSize = 10;
-    const gridDivisions = 20;
-    const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x6366f1, 0x333333);
+    const gridHelper = new THREE.GridHelper(20, 20, 0x333333, 0x222222);
     gridHelper.name = 'mainGrid';
+    gridHelper.visible = false;
+    styleMainViewportGrid(gridHelper);
     gridHelper.userData.isEnvironment = true; // hidden during spatial preview (AR overlay)
     state.scene.add(gridHelper);
 
@@ -692,44 +856,405 @@ function createSafeZone() {
 
 // ===== ADD SAMPLE OBJECTS =====
 function addSampleObjects() {
-    const group = getActiveScreenGroup();
-    const objects = [
-        { type: 'box', color: 0x6366f1, pos: [-1, 0.5, 0], name: 'Cube' },
-        { type: 'sphere', color: 0xec4899, pos: [0, 0.5, 0], name: 'Sphere' },
-        { type: 'cylinder', color: 0x8b5cf6, pos: [1, 0.5, 0], name: 'Cylinder' }
-    ];
+    return;
+}
 
-    objects.forEach(({ type, color, pos, name }) => {
-        let geometry;
-        if (type === 'box') geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-        else if (type === 'sphere') geometry = new THREE.SphereGeometry(0.3, 32, 32);
-        else geometry = new THREE.CylinderGeometry(0.2, 0.2, 0.6, 32);
+// ===== FIRST-TIME TUTORIAL (spotlight overlay) =====
+const tutorialSteps = [
+    {
+        step: 1,
+        title: 'Add your first button',
+        description:
+            "Click 'Assets' in the left panel, then click the Button component to add it to your canvas.",
+        targetSelector: "[data-tab='assets']",
+        cardPosition: 'right'
+    },
+    {
+        step: 2,
+        title: 'Change the button color',
+        description:
+            "With the button selected, look at the Properties panel on the right. Find the color swatch and click it to change the button's background color.",
+        targetSelector: '#properties-panel',
+        cardPosition: 'left'
+    },
+    {
+        step: 3,
+        title: 'Add a second screen',
+        description:
+            "Click the 'Screens' tab in the left panel. Then click the '+' button to add a new screen. This will be the screen your button navigates to.",
+        targetSelector: "[data-tab='screens']",
+        cardPosition: 'right'
+    },
+    {
+        step: 4,
+        title: 'Add a frame to Screen 2',
+        description:
+            'With Screen 2 active, click the Frame tool in the toolbar below, then click and drag on the canvas to draw a frame. This represents your second UI screen.',
+        targetSelector: '#floating-toolbar',
+        cardPosition: 'top'
+    },
+    {
+        step: 5,
+        title: 'Add a text label',
+        description:
+            "Click the Text tool (T) in the toolbar, then click inside your frame to add a text element. Type something like 'Screen 2' so you can identify it.",
+        targetSelector: '#tool-text',
+        cardPosition: 'top'
+    },
+    {
+        step: 6,
+        title: 'Link your button to Screen 2',
+        description:
+            "Go back to Screen 1 and select your button. In the Properties panel on the right, scroll to 'Interaction' and choose Screen 2 from the 'On Click → Go To Screen' dropdown.",
+        targetSelector: '#interaction-section',
+        cardPosition: 'left'
+    },
+    {
+        step: 7,
+        title: 'Set the animation style',
+        description:
+            "Still in the Interaction section, choose an animation type like 'Fade' or 'Slide Left'. Then set a duration — 300ms is a good starting point.",
+        targetSelector: '#interaction-section',
+        cardPosition: 'left'
+    },
+    {
+        step: 8,
+        title: 'Switch to Prototype mode',
+        description:
+            "Click 'Prototype Mode' in the top bar. Now click your button on the canvas — it should navigate to Screen 2! Click the back arrow to return.",
+        targetSelector: '#prototype-mode-btn',
+        cardPosition: 'bottom'
+    },
+    {
+        step: 9,
+        title: 'Preview in an environment',
+        description:
+            "Click the 'Environ' tab on the left. Select a preset like 'Minimal Studio' to see your UI floating in a real space. You can orbit the camera to look around.",
+        targetSelector: "[data-tab='environments']",
+        cardPosition: 'right'
+    },
+    {
+        step: 10,
+        title: 'Preview with your camera',
+        description:
+            'Click the camera icon in the top bar to open the live spatial preview. Your UI will appear overlaid on your real space. Move your mouse to feel the depth.',
+        targetSelector: '#spatial-preview-btn',
+        cardPosition: 'bottom'
+    }
+];
 
-        const material = new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.6 });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(...pos);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.name = name;
-        mesh.userData.selectable = true;
-        mesh.userData.screenId = state.activeScreenId;
-        mesh.userData.voidType = 'primitive';
-        if (group) group.add(mesh);
-        else state.scene.add(mesh);
-        state.objects.push(mesh);
-        state.selectableObjects.push(mesh);
+let tutorialRuntime = null;
+
+function teardownTutorial() {
+    if (tutorialRuntime?.onResize) window.removeEventListener('resize', tutorialRuntime.onResize);
+    tutorialRuntime?.overlay?.remove();
+    tutorialRuntime = null;
+    document.querySelectorAll('.tutorial-done-modal').forEach((el) => el.remove());
+}
+
+function computeTutorialSpotlight(rect) {
+    const pad = 32;
+    const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const cy = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    const ew = Math.max(rect ? rect.width + pad : 200, 120);
+    const eh = Math.max(rect ? rect.height + pad : 120, 100);
+    const rInner = Math.min(Math.hypot(ew, eh) * 0.38, Math.min(ew, eh) * 0.45);
+    return {
+        bg: `radial-gradient(ellipse ${ew}px ${eh}px at ${cx}px ${cy}px, transparent 0%, transparent ${rInner}px, rgba(0,0,0,0.78) ${rInner + 40}px)`,
+        cx,
+        cy
+    };
+}
+
+function positionTutorialCard(card, step, rect) {
+    const w = 280;
+    const margin = 16;
+    card.style.position = 'absolute';
+    card.style.width = `${w}px`;
+
+    const cx = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const cy = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+
+    if (step.cardPosition === 'right') {
+        card.style.left = `${Math.min(rect ? rect.right + margin : cx + margin, window.innerWidth - w - margin)}px`;
+        card.style.top = `${Math.max(margin, (rect ? rect.top : cy) - 20)}px`;
+        card.style.right = 'auto';
+        card.style.bottom = 'auto';
+    } else if (step.cardPosition === 'left') {
+        card.style.left = `${Math.max(margin, (rect ? rect.left : cx) - w - margin)}px`;
+        card.style.top = `${Math.max(margin, (rect ? rect.top : cy) - 20)}px`;
+        card.style.right = 'auto';
+        card.style.bottom = 'auto';
+    } else if (step.cardPosition === 'top') {
+        const left = rect
+            ? rect.left + rect.width / 2 - w / 2
+            : cx - w / 2;
+        card.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - w - margin))}px`;
+        card.style.top = `${Math.max(margin, (rect ? rect.top : cy - 120) - margin - 140)}px`;
+        card.style.bottom = 'auto';
+    } else {
+        const bot = rect ? rect.bottom + margin : cy + margin;
+        const left = rect ? rect.left + rect.width / 2 - w / 2 : cx - w / 2;
+        card.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - w - margin))}px`;
+        card.style.top = `${Math.min(window.innerHeight - margin - 200, bot)}px`;
+        card.style.bottom = 'auto';
+    }
+}
+
+function showTutorialCompletionModal(onDone) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tutorial-done-modal';
+    wrap.id = 'tutorial-completion-overlay';
+    wrap.innerHTML = `
+        <div class="tutorial-done-card">
+            <i data-lucide="check-circle-2"></i>
+            <h3>You're ready to design!</h3>
+            <p>You've completed the Void tutorial.<br/>Start building your first XR interface.</p>
+            <button type="button" class="tutorial-done-btn" id="tutorial-done-dismiss">Start designing →</button>
+        </div>
+    `;
+    document.body.appendChild(wrap);
+    wrap.querySelector('#tutorial-done-dismiss')?.addEventListener('click', () => {
+        wrap.remove();
+        onDone();
+    });
+    initializeLucideIcons();
+}
+
+function tutorialRenderStep(idx) {
+    if (!tutorialRuntime) return;
+    const step = tutorialSteps[idx];
+    if (!step) return;
+
+    tutorialRuntime.overlay.querySelector('[data-tutorial-step-label]').textContent = `STEP ${step.step} OF ${tutorialSteps.length}`;
+    tutorialRuntime.overlay.querySelector('[data-tutorial-title]').textContent = step.title;
+    tutorialRuntime.overlay.querySelector('[data-tutorial-desc]').textContent = step.description;
+
+    const btn = tutorialRuntime.overlay.querySelector('[data-tutorial-next]');
+    btn.textContent = idx >= tutorialSteps.length - 1 ? 'Finish →' : 'Next →';
+
+    let el = null;
+    try {
+        el = document.querySelector(step.targetSelector);
+    } catch (_) {
+        el = null;
+    }
+    let rect = el ? el.getBoundingClientRect() : null;
+    if (el && rect && (rect.width < 4 || rect.height < 4)) rect = null;
+    if (!rect) rect = null;
+
+    const spot = computeTutorialSpotlight(rect);
+    const veil = tutorialRuntime.overlay.querySelector('.tutorial-veil');
+    if (veil) {
+        veil.style.transition = 'background 400ms ease';
+        veil.style.background = spot.bg;
+    }
+
+    positionTutorialCard(tutorialRuntime.card, step, rect);
+}
+
+function skipTutorialUi() {
+    teardownTutorial();
+    showNotification('Tutorial skipped — you can restart it from Help menu');
+}
+
+function initTutorial() {
+    if (tutorialRuntime) teardownTutorial();
+    if (state.appPhase !== 'editor' || document.getElementById('tutorial-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'tutorial-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.innerHTML = `
+        <div class="tutorial-veil" aria-hidden="true"></div>
+        <div class="tutorial-modal-card">
+            <p class="tutorial-step-label" data-tutorial-step-label>STEP 1 OF 10</p>
+            <h4 class="tutorial-card-title" data-tutorial-title>Add your first button</h4>
+            <p class="tutorial-card-desc" data-tutorial-desc>Description.</p>
+            <div class="tutorial-card-actions">
+                <button type="button" class="tutorial-skip-btn" data-tutorial-skip>Skip tutorial</button>
+                <button type="button" class="tutorial-next-btn" data-tutorial-next>Next →</button>
+            </div>
+        </div>
+    `;
+
+    overlay.style.cssText =
+        'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999;pointer-events:auto;transition:opacity 280ms ease;';
+    overlay.querySelector('.tutorial-veil').style.cssText =
+        'position:absolute;inset:0;background:rgba(0,0,0,0.75);pointer-events:auto;';
+
+    const card = overlay.querySelector('.tutorial-modal-card');
+
+    overlay.querySelector('[data-tutorial-skip]')?.addEventListener('click', skipTutorialUi);
+
+    overlay.querySelector('[data-tutorial-next]')?.addEventListener('click', () => {
+        if (!tutorialRuntime) return;
+        const idx = tutorialRuntime.index;
+        if (idx >= tutorialSteps.length - 1) {
+            overlay.style.opacity = '0';
+            const ov = overlay;
+            if (tutorialRuntime.onResize) window.removeEventListener('resize', tutorialRuntime.onResize);
+            tutorialRuntime = null;
+            setTimeout(() => {
+                ov.remove();
+                showTutorialCompletionModal(() => {});
+            }, 280);
+            return;
+        }
+        tutorialRuntime.index = idx + 1;
+        tutorialRenderStep(tutorialRuntime.index);
     });
 
-    // Ground plane (always visible, not part of a screen)
-    const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(10, 10),
-        new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 })
-    );
-    plane.rotation.x = -Math.PI / 2;
-    plane.receiveShadow = true;
-    plane.name = 'Ground';
-    plane.userData.isEnvironment = true;
-    state.scene.add(plane);
+    document.body.appendChild(overlay);
+
+    tutorialRuntime = {
+        overlay,
+        card,
+        index: 0,
+        onResize: () => tutorialRenderStep(tutorialRuntime?.index ?? 0)
+    };
+    window.addEventListener('resize', tutorialRuntime.onResize);
+
+    tutorialRenderStep(0);
+    initializeLucideIcons();
+}
+
+let tutorialIntroTimeoutId = null;
+
+/** Show tutorial after every navigation into the editor (no localStorage “seen” flag). */
+function scheduleEditorTutorialOnce() {
+    if (tutorialIntroTimeoutId) clearTimeout(tutorialIntroTimeoutId);
+    tutorialIntroTimeoutId = setTimeout(() => {
+        tutorialIntroTimeoutId = null;
+        if (state.appPhase !== 'editor' || !state.editorExperienceInitialized) return;
+        if (document.getElementById('tutorial-overlay')) return;
+        initTutorial();
+    }, 1500);
+}
+
+let topNavStarRafId = null;
+let topNavStarResizeBound = false;
+
+function stopTopNavStarfield() {
+    if (topNavStarRafId != null) {
+        cancelAnimationFrame(topNavStarRafId);
+        topNavStarRafId = null;
+    }
+}
+
+function initTopNavStarfield() {
+    const canvas = document.getElementById('top-nav-stars-canvas');
+    const nav = document.getElementById('app-top-nav');
+    if (!canvas || !nav) return;
+    stopTopNavStarfield();
+
+    const dpr = window.devicePixelRatio || 1;
+
+    function syncSize() {
+        const r = nav.getBoundingClientRect();
+        const ww = Math.max(1, Math.floor(r.width * dpr));
+        const hh = Math.max(1, Math.floor(r.height * dpr));
+        canvas.width = ww;
+        canvas.height = hh;
+    }
+
+    let nw = nav.clientWidth;
+    let nh = nav.clientHeight || 44;
+    const stars = Array.from({ length: 60 }, () => ({
+        x: Math.random() * Math.max(nw, 88),
+        y: Math.random() * Math.max(nh, 20),
+        r: (0.5 + Math.random() * 1) * dpr,
+        a: 0.3 + Math.random() * 0.4,
+        vx: 0.05 + Math.random() * 0.1
+    }));
+
+    /** @type {{ x: number; y: number; vx: number; vy: number; len: number; ageMs: number; born: number }[]} */
+    const shots = [];
+
+    let prev = performance.now();
+    let shootAfter = prev + 4000 + Math.random() * 4000;
+
+    if (!topNavStarResizeBound) {
+        window.addEventListener('resize', syncSize);
+        topNavStarResizeBound = true;
+    }
+
+    function frame(now) {
+        syncSize();
+        const ctx = canvas.getContext('2d');
+        nw = nav.clientWidth;
+        nh = nav.clientHeight || 1;
+        const cw = canvas.width;
+        const ch = canvas.height;
+        topNavStarRafId = requestAnimationFrame(frame);
+        if (nav.hidden || !ctx || nw < 8) return;
+
+        const dt = Math.min(48, now - prev);
+        prev = now;
+        const sx = cw / nw;
+        const sy = ch / nh;
+
+        ctx.clearRect(0, 0, cw, ch);
+
+        for (let i = 0; i < stars.length; i++) {
+            const s = stars[i];
+            s.x += s.vx * (dt / 16.67);
+            if (s.x > nw + 5) s.x = -10;
+            if (s.y > nh || s.y < 0) s.y = Math.random() * nh;
+            ctx.fillStyle = `rgba(255,255,255,${s.a})`;
+            ctx.beginPath();
+            ctx.arc(s.x * sx, s.y * sy, s.r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (now > shootAfter && shots.length < 3) {
+            shots.push({
+                x: -(20 + Math.random() * 40),
+                y: Math.random() * nh * 0.6,
+                vx: (2 + Math.random() * 2) * (dt / 16.67),
+                vy: (0.55 + Math.random() * 0.45) * (dt / 16.67),
+                len: 15 + Math.random() * 15,
+                ageMs: 0,
+                born: now
+            });
+            shootAfter = now + 4000 + Math.random() * 4000;
+        }
+
+        const alive = [];
+        for (let j = 0; j < shots.length; j++) {
+            const t = shots[j];
+            t.ageMs = now - t.born;
+            t.x += t.vx * (dt / 16.67);
+            t.y += t.vy * (dt / 16.67);
+
+            let alpha = 0;
+            const fadeOutStart = Math.max(t.len * 6, 180);
+            if (t.ageMs < 180) alpha = (t.ageMs / 180) * 0.65;
+            else if (t.ageMs > fadeOutStart) alpha = (1 - (t.ageMs - fadeOutStart) / 300) * 0.65;
+            else alpha = 0.65;
+
+            alpha = Math.max(0, Math.min(0.7, alpha));
+            if (alpha < 0.02 || t.x > nw + 80) continue;
+
+            const x1 = t.x * sx;
+            const y1 = t.y * sy;
+            const x2 = (t.x + t.len * 1.05) * sx;
+            const y2 = (t.y + t.len * 0.52) * sy;
+            ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+            ctx.lineWidth = dpr * 0.9;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+
+            alive.push(t);
+        }
+        shots.length = 0;
+        for (let k = 0; k < alive.length; k++) shots.push(alive[k]);
+    }
+
+    topNavStarRafId = requestAnimationFrame(frame);
 }
 
 // ===== PROTOTYPE MICRO-ANIMATIONS (ShapesXR-style, no external tween lib) =====
@@ -1488,6 +2013,7 @@ function selectObject(object) {
     updateAppearanceFromObject(object);
     updateInteractionPanel(object);
     updateFrameAndTextPropertyPanels(object);
+    updateImagePropertyPanel(object);
 
     showNotification(`Selected: ${object.name}`);
 }
@@ -1728,12 +2254,17 @@ function addObjectToActiveScreen(object, defaultSpatial = null) {
     const frame = resolveFrameForParenting();
 
     if (frame) {
-        object.position.set(0, 0, 0.04);
+        object.position.set(0, 0, state.viewMode === '2d' ? 0 : 0.04);
         object.rotation.set(0, 0, 0);
         frame.add(object);
         clampObjectToParentFrame(object);
     } else {
-        if (defaultSpatial) applySpatialToObject(object, defaultSpatial);
+        if (state.viewMode === '2d') {
+            object.position.set(0, 0, 0);
+            object.rotation.set(0, 0, 0);
+        } else if (defaultSpatial) {
+            applySpatialToObject(object, defaultSpatial);
+        }
         const g = getActiveScreenGroup();
         if (g) g.add(object);
         else state.scene.add(object);
@@ -1787,7 +2318,12 @@ function createFrame(width, height, name = 'Frame') {
     ensureInteractionUserData(group.userData);
     state.lastFrameSize = { width, height };
 
-    applySpatialToObject(group, { distance: 2.2, side: 0, height: 1.2, facingDeg: 0 });
+    if (state.viewMode === '2d') {
+        group.position.set(0, 0, 0);
+        group.rotation.set(0, 0, 0);
+    } else {
+        applySpatialToObject(group, { distance: 2.2, side: 0, height: 1.2, facingDeg: 0 });
+    }
     const g = getActiveScreenGroup();
     if (g) g.add(group);
     else state.scene.add(group);
@@ -1952,6 +2488,7 @@ function createXRImagePlaceholder() {
             opacity: 0.85
         })
     );
+    group.userData._imagePlateMesh = frame;
     group.add(frame);
 
     const edges = new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h));
@@ -1964,8 +2501,65 @@ function createXRImagePlaceholder() {
 
     addObjectToActiveScreen(group, { distance: 2.1, side: 0, height: 1.35, facingDeg: 0 });
     selectObject(group);
-    showNotification('Added image placeholder');
+    queueMicrotask(() => openImageFilePicker(group));
+    showNotification('Added image placeholder — choose a file');
     return group;
+}
+
+function getImagePlateMesh(obj) {
+    if (!obj || obj.userData?.voidType !== 'image') return null;
+    if (obj.userData._imagePlateMesh) return obj.userData._imagePlateMesh;
+    const found = obj.children.find((c) => c.isMesh && c.geometry?.type === 'PlaneGeometry');
+    if (found) obj.userData._imagePlateMesh = found;
+    return found || null;
+}
+
+function applyImageToComponent(obj, dataUrl) {
+    const mesh = getImagePlateMesh(obj);
+    if (!mesh?.material) return;
+    const prev = mesh.material.map;
+    const tl = new THREE.TextureLoader();
+    tl.load(dataUrl, (texture) => {
+        if (prev) prev.dispose();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        mesh.material.map = texture;
+        mesh.material.color.setHex(0xffffff);
+        mesh.material.transparent = false;
+        mesh.material.needsUpdate = true;
+        showNotification('Image applied');
+        refreshLayersPanel();
+    });
+}
+
+function openImageFilePicker(forObject = state.selectedObject) {
+    const target = forObject?.userData?.voidType === 'image' ? forObject : state.selectedObject;
+    if (!target || target.userData?.voidType !== 'image') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener(
+        'change',
+        () => {
+            const file = input.files && input.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (ev) => applyImageToComponent(target, /** @type {string} */ (ev.target.result));
+                reader.readAsDataURL(file);
+            }
+            input.remove();
+        },
+        { once: true }
+    );
+    input.click();
+}
+
+function updateImagePropertyPanel(object) {
+    const grp = document.getElementById('image-source-group');
+    if (!grp) return;
+    grp.style.display = object?.userData?.voidType === 'image' ? 'block' : 'none';
 }
 
 // ===== DELETE OBJECT =====
@@ -1974,8 +2568,11 @@ function disposeObject3D(object) {
         if (child.isMesh) {
             if (child.geometry) child.geometry.dispose();
             if (child.material) {
-                if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-                else child.material.dispose();
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                mats.forEach((m) => {
+                    if (m.map) m.map.dispose();
+                    m.dispose();
+                });
             }
         }
     });
@@ -2100,7 +2697,7 @@ function updatePrototypeLinkLines() {
     if (!g || !state.scene) return;
 
     const showLinks =
-        state.editorMode === 'design' &&
+        (state.editorMode === 'design' || state.editorMode === 'prototype') &&
         !state.spatialPreviewActive &&
         (state.viewMode === '3d' || state.viewMode === '2d');
 
@@ -2128,7 +2725,7 @@ function updatePrototypeLinkLines() {
         }
         const end = resolveProtoLineEndForScreenLink(obj, targetScreen);
         if (!end) return;
-        _protoLinkA.copy(start);
+        // use already resolved source point
         _protoLinkB.copy(end);
 
         _protoLinkMid.copy(_protoLinkA).lerp(_protoLinkB, 0.5);
@@ -2183,338 +2780,39 @@ function formatTransitionLabel(t, ms) {
 let _protoLinkModalContext = null;
 
 function openProtoLinkDestinationModal(sourceRoot, targetRoot) {
-    const srcScreen = sourceRoot.userData?.screenId;
-    const sel = document.getElementById('proto-dest-screen-select');
-    const modal = document.getElementById('proto-link-dest-modal');
-    if (!sel || !modal) return;
-    let n = 0;
-    sel.innerHTML = '';
-    state.screens.forEach((s) => {
-        if (s.id === srcScreen) return;
-        const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.name;
-        sel.appendChild(opt);
-        n++;
-    });
-    if (n === 0) {
-        showNotification('Add another screen first, then link to it');
-        return;
-    }
-    sel.value = sel.options[0].value;
-    _protoLinkModalContext = { source: sourceRoot, target: targetRoot };
-    modal.style.display = 'flex';
-    modal.setAttribute('aria-hidden', 'false');
+    // Drag-to-connect flow removed. Keep function as no-op for compatibility.
+    void sourceRoot;
+    void targetRoot;
 }
 
 function closeProtoLinkDestinationModal() {
-    const modal = document.getElementById('proto-link-dest-modal');
-    if (modal) {
-        modal.style.display = 'none';
-        modal.setAttribute('aria-hidden', 'true');
-    }
+    // Drag-to-connect flow removed. Keep function as no-op for compatibility.
     _protoLinkModalContext = null;
 }
 
 function confirmProtoLinkDestinationModal() {
-    const ctx = _protoLinkModalContext;
-    const sel = document.getElementById('proto-dest-screen-select');
-    if (!ctx || !ctx.source || !sel) {
-        closeProtoLinkDestinationModal();
-        return;
-    }
-    const toId = sel.value;
-    if (!toId) {
-        closeProtoLinkDestinationModal();
-        return;
-    }
-    ensureInteractionUserData(ctx.source.userData);
-    ctx.source.userData.onClickScreenId = toId;
-    if (ctx.target) ctx.source.userData.prototypeLinkTargetUuid = ctx.target.uuid;
-    else ctx.source.userData.prototypeLinkTargetUuid = '';
-    showNotification('Prototype link created');
-    scheduleRemoteProjectSave();
-    updatePrototypeLinkLines();
+    // Drag-to-connect flow removed. Keep function as no-op for compatibility.
     closeProtoLinkDestinationModal();
 }
 
 function pickProtoLinkableAt(clientX, clientY) {
-    if (!state.raycaster || !state.camera || !state.renderer) return null;
-    const rect = state.renderer.domElement.getBoundingClientRect();
-    state.mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    state.mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    state.raycaster.setFromCamera(state.mouse, state.camera);
-    const hits = state.raycaster.intersectObjects(state.selectableObjects, true);
-    if (!hits.length) return null;
-    const root = resolveSelectableRoot(hits[0].object);
-    if (root && isInteractionVoidType(root.userData?.voidType)) return root;
+    void clientX;
+    void clientY;
     return null;
 }
 
 function syncPrototypeLinkOverlaySize() {
-    const ui = state.prototypeLinkUI;
-    if (!ui || !state.renderer) return;
-    const host = state.renderer.domElement;
-    const w = host.clientWidth;
-    const h = host.clientHeight;
-    const dpr = window.devicePixelRatio || 1;
-    ui.dpr = dpr;
-    ui.canvas.width = Math.floor(w * dpr);
-    ui.canvas.height = Math.floor(h * dpr);
-    ui.canvas.style.width = `${w}px`;
-    ui.canvas.style.height = `${h}px`;
-    ui.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Drag overlay removed.
 }
 
 function initPrototypeLinkOverlay(viewportElement) {
-    if (!viewportElement || state.prototypeLinkUI) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'prototype-link-overlay';
-    wrap.id = 'prototype-link-overlay';
-    const canvas = document.createElement('canvas');
-    canvas.className = 'prototype-link-canvas';
-    canvas.setAttribute('aria-hidden', 'true');
-    const deletes = document.createElement('div');
-    deletes.className = 'prototype-link-deletes';
-    const handle = document.createElement('button');
-    handle.type = 'button';
-    handle.className = 'proto-link-handle';
-    handle.title = 'Drag to connect';
-    handle.setAttribute('aria-label', 'Drag to connect to another element');
-    wrap.appendChild(canvas);
-    wrap.appendChild(deletes);
-    wrap.appendChild(handle);
-    viewportElement.appendChild(wrap);
-    const ctx = canvas.getContext('2d');
-    state.prototypeLinkUI = { wrap, canvas, ctx, handle, deletes, dpr: 1 };
-
-    handle.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (state.editorMode !== 'prototype' || !state.prototypeHoverRoot) return;
-        const source = state.prototypeHoverRoot;
-        if (!isInteractionVoidType(source.userData.voidType)) return;
-        state.prototypeLinkDrag = {
-            source,
-            pointerId: e.pointerId,
-            startX: e.clientX,
-            startY: e.clientY,
-            lastX: e.clientX,
-            lastY: e.clientY
-        };
-        handle.classList.add('is-visible');
-        try {
-            handle.setPointerCapture(e.pointerId);
-        } catch (_) {}
-        const onMove = (ev) => {
-            if (!state.prototypeLinkDrag || state.prototypeLinkDrag.pointerId !== ev.pointerId) return;
-            state.prototypeLinkDrag.lastX = ev.clientX;
-            state.prototypeLinkDrag.lastY = ev.clientY;
-            const t = pickProtoLinkableAt(ev.clientX, ev.clientY);
-            state.prototypeLinkDrag.hoverTarget = t && t !== state.prototypeLinkDrag.source ? t : null;
-        };
-        const onUp = (ev) => {
-            if (!state.prototypeLinkDrag || state.prototypeLinkDrag.pointerId !== ev.pointerId) return;
-            document.removeEventListener('pointermove', onMove, true);
-            document.removeEventListener('pointerup', onUp, true);
-            try {
-                handle.releasePointerCapture(ev.pointerId);
-            } catch (_) {}
-            const drag = state.prototypeLinkDrag;
-            state.prototypeLinkDrag = null;
-            const hov = pickProtoLinkableAt(ev.clientX, ev.clientY);
-            if (hov && hov !== drag.source && isInteractionVoidType(hov.userData.voidType)) {
-                openProtoLinkDestinationModal(drag.source, hov);
-            } else {
-                showNotification('Connection cancelled');
-            }
-        };
-        document.addEventListener('pointermove', onMove, true);
-        document.addEventListener('pointerup', onUp, true);
-    });
-
-    document.getElementById('proto-link-dest-confirm')?.addEventListener('click', confirmProtoLinkDestinationModal);
-    document.getElementById('proto-link-dest-cancel')?.addEventListener('click', closeProtoLinkDestinationModal);
+    // Drag-to-connect overlay removed.
+    void viewportElement;
+    state.prototypeLinkUI = null;
 }
 
 function updatePrototypeLinkOverlay() {
-    const ui = state.prototypeLinkUI;
-    if (!ui || !state.renderer || !state.camera) return;
-    const designOnly =
-        state.editorMode === 'design' ||
-        state.spatialPreviewActive ||
-        (state.appPhase && state.appPhase !== 'editor');
-    ui.wrap.style.display = designOnly || !state.editorExperienceInitialized ? 'none' : 'block';
-    if (designOnly || state.editorMode !== 'prototype' || state.spatialPreviewActive) {
-        ui.handle.classList.remove('is-visible');
-        return;
-    }
-    if (state.prototypeLinkDrag) {
-        ui.handle.classList.add('is-visible');
-    }
-    syncPrototypeLinkOverlaySize();
-    const w = ui.wrap.clientWidth;
-    const h = ui.wrap.clientHeight;
-    const ctx = ui.ctx;
-    ctx.clearRect(0, 0, w, h);
-    const emphasis = state.selectedObject || state.prototypeHoverRoot;
-
-    const drawBezierWithAlpha = (p0, p1, p2, alpha) => {
-        const acc = 0.3 + 0.7 * alpha;
-        const stroke = `rgba(107,107,255,${0.2 + 0.8 * acc})`;
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(p0.x, p0.y);
-        ctx.quadraticCurveTo(p1.x, p1.y, p2.x, p2.y);
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = 2;
-        ctx.shadowColor = 'rgba(107,107,255,0.45)';
-        ctx.shadowBlur = 6;
-        ctx.stroke();
-        ctx.restore();
-        const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-        ctx.save();
-        ctx.fillStyle = '#6b6bff';
-        ctx.translate(p2.x, p2.y);
-        ctx.rotate(ang);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(-9, -4);
-        ctx.lineTo(-9, 4);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-    };
-
-    state.objects.forEach((obj) => {
-        if (!isInteractionVoidType(obj.userData?.voidType)) return;
-        const toId = obj.userData.onClickScreenId;
-        if (!toId) return;
-        const targetScreen = state.screens.find((s) => s.id === toId);
-        if (!targetScreen) return;
-        const start3 = getPlanarLinkWorldPoint(obj, 'right') || (obj.getWorldPosition(_pOv), _pOv.clone());
-        const end3 = resolveProtoLineEndForScreenLink(obj, targetScreen);
-        if (!end3) return;
-        worldToProtoOverlayPx(start3, _pOv2);
-        worldToProtoOverlayPx(end3, _pOv3);
-        const p0 = { x: _pOv2.x, y: _pOv2.y };
-        const p2 = { x: _pOv3.x, y: _pOv3.y };
-        const p1 = { x: (p0.x + p2.x) * 0.5, y: (p0.y + p2.y) * 0.5 - 24 };
-        let alpha;
-        if (!emphasis) alpha = 0.3;
-        else if (emphasis === obj) alpha = 1;
-        else alpha = 0.15;
-        drawBezierWithAlpha(p0, p1, p2, alpha);
-        const mx = 0.25 * p0.x + 0.5 * p1.x + 0.25 * p2.x;
-        const my = 0.25 * p0.y + 0.5 * p1.y + 0.25 * p2.y;
-        ensureInteractionUserData(obj.userData);
-        const lab = formatTransitionLabel(obj.userData.transitionType, obj.userData.transitionDuration);
-        ctx.save();
-        ctx.font = '11px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-        ctx.strokeText(lab, mx, my);
-        ctx.fillStyle = 'rgba(250,250,255,0.95)';
-        ctx.fillText(lab, mx, my);
-        ctx.restore();
-    });
-
-    if (state.prototypeLinkDrag && state.prototypeLinkDrag.source) {
-        const s = getPlanarLinkWorldPoint(state.prototypeLinkDrag.source, 'right') || (state.prototypeLinkDrag.source.getWorldPosition(_pOv), _pOv.clone());
-        worldToProtoOverlayPx(s, _pOv2);
-        const lx = state.prototypeLinkDrag.lastX ?? state.prototypeLinkDrag.startX;
-        const ly = state.prototypeLinkDrag.lastY ?? state.prototypeLinkDrag.startY;
-        const r = state.renderer.domElement.getBoundingClientRect();
-        const p0 = { x: _pOv2.x, y: _pOv2.y };
-        const p2 = { x: lx - r.left, y: ly - r.top };
-        const p1 = { x: (p0.x + p2.x) * 0.5, y: (p0.y + p2.y) * 0.5 - 20 };
-        drawBezierWithAlpha(p0, p1, p2, 1);
-        if (state.prototypeLinkDrag.hoverTarget) {
-            const ht = state.prototypeLinkDrag.hoverTarget;
-            _protoLinkBox.setFromObject(ht);
-            if (!_protoLinkBox.isEmpty()) {
-                const mn = _protoLinkBox.min;
-                const mx = _protoLinkBox.max;
-                const corners = [
-                    new THREE.Vector3(mn.x, mn.y, mn.z), new THREE.Vector3(mx.x, mn.y, mn.z),
-                    new THREE.Vector3(mx.x, mx.y, mn.z), new THREE.Vector3(mn.x, mx.y, mn.z),
-                    new THREE.Vector3(mn.x, mn.y, mx.z), new THREE.Vector3(mx.x, mn.y, mx.z),
-                    new THREE.Vector3(mx.x, mx.y, mx.z), new THREE.Vector3(mn.x, mx.y, mx.z)
-                ];
-                let x0 = Infinity;
-                let y0 = Infinity;
-                let x1 = -Infinity;
-                let y1 = -Infinity;
-                for (const c of corners) {
-                    worldToProtoOverlayPx(c, _pOv2);
-                    x0 = Math.min(x0, _pOv2.x);
-                    y0 = Math.min(y0, _pOv2.y);
-                    x1 = Math.max(x1, _pOv2.x);
-                    y1 = Math.max(y1, _pOv2.y);
-                }
-                ctx.save();
-                ctx.shadowColor = 'rgba(107,107,255,0.5)';
-                ctx.shadowBlur = 10;
-                ctx.strokeStyle = 'rgba(107,107,255,0.95)';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
-                ctx.restore();
-            }
-        }
-    }
-
-    ui.deletes.innerHTML = '';
-    if (state.selectedObject && isInteractionVoidType(state.selectedObject.userData?.voidType)) {
-        const sel = state.selectedObject;
-        if (sel.userData.onClickScreenId) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'prototype-line-delete-x';
-            b.textContent = '×';
-            b.title = 'Remove connection';
-            b.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                ensureInteractionUserData(sel.userData);
-                sel.userData.onClickScreenId = '';
-                sel.userData.prototypeLinkTargetUuid = '';
-                showNotification('Connection removed');
-                scheduleRemoteProjectSave();
-                updateInteractionPanel(sel);
-            });
-            const toId = sel.userData.onClickScreenId;
-            const tsc = state.screens.find((s) => s.id === toId);
-            if (tsc) {
-                const end3 = resolveProtoLineEndForScreenLink(sel, tsc);
-                if (end3) {
-                    const start3 = getPlanarLinkWorldPoint(sel, 'right') || (sel.getWorldPosition(_pOv), _pOv.clone());
-                    worldToProtoOverlayPx(start3, _pOv2);
-                    worldToProtoOverlayPx(end3, _pOv3);
-                    const mx = (_pOv2.x + _pOv3.x) * 0.5;
-                    const my = (_pOv2.y + _pOv3.y) * 0.5;
-                    b.style.left = `${mx}px`;
-                    b.style.top = `${my}px`;
-                    ui.deletes.appendChild(b);
-                }
-            }
-        }
-    }
-
-    if (!state.prototypeLinkDrag && state.prototypeHoverRoot && isInteractionVoidType(state.prototypeHoverRoot.userData?.voidType)) {
-        const hp = getPlanarLinkWorldPoint(state.prototypeHoverRoot, 'right') || (state.prototypeHoverRoot.getWorldPosition(_pOv), _pOv.clone());
-        const z = worldToProtoOverlayPx(hp, _pOv2);
-        if (z > -1 && z < 1) {
-            ui.handle.classList.add('is-visible');
-            ui.handle.style.left = `${_pOv2.x}px`;
-            ui.handle.style.top = `${_pOv2.y}px`;
-        } else {
-            ui.handle.classList.remove('is-visible');
-        }
-    } else if (!state.prototypeLinkDrag) {
-        ui.handle.classList.remove('is-visible');
-    }
+    // Drag-to-connect overlay removed.
 }
 
 // ===== ANIMATION LOOP =====
@@ -2522,13 +2820,6 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (state.controls) state.controls.update();
-
-    if (state.lastPointerOverCanvas && state.lastViewportPointer && state.editorMode === 'prototype' && !state.prototypeLinkDrag) {
-        const p = state.lastViewportPointer;
-        const t = pickProtoLinkableAt(p.x, p.y);
-        state.prototypeHoverRoot = t;
-    }
-    if (!state.lastPointerOverCanvas) state.prototypeHoverRoot = null;
 
     updateViewportPosition();
     apply2DBillboards();
@@ -2653,8 +2944,15 @@ function updateTransformControlsForViewMode() {
 
 function setViewMode(mode) {
     if (!state.camera || !state.controls || !state.scene) return;
-    if (state.viewMode === mode) return;
+    const sameMode = state.viewMode === mode;
     state.viewMode = mode;
+
+    if (mode === '2d') {
+        snapshotEnvironmentVisibilityForViewMode();
+        forceHideEnvironmentForTwoD();
+    } else {
+        restoreEnvironmentVisibilityForThreeD();
+    }
 
     syncViewModeUi();
 
@@ -2680,36 +2978,75 @@ function setViewMode(mode) {
         state.controls.enableRotate = false;
         state.controls.enablePan = true;
         state.controls.enableZoom = true;
+        state.controls.screenSpacePanning = true;
         state.controls.minPolarAngle = Math.PI / 2;
         state.controls.maxPolarAngle = Math.PI / 2;
         switchActiveCamera(state.orthographicCamera);
         updateOrthoCameraFrustum();
-        state.orthographicCamera.position.set(0, 0, 5);
+        state.orthographicCamera.position.set(0, 0, 10);
         state.orthographicCamera.lookAt(0, 0, 0);
         state.controls.target.set(0, 0, 0);
         state.controls.update();
+        if (state.transformControls) {
+            state.transformControls.detach();
+            state.transformControls.visible = false;
+            state.transformControls.enabled = false;
+        }
+        // Keep stored visibility states; only hide while in 2D mode.
     } else {
         if (state.controls3DDefaults) {
             state.controls.enableRotate = state.controls3DDefaults.enableRotate;
             state.controls.minPolarAngle = state.controls3DDefaults.minPolarAngle;
             state.controls.maxPolarAngle = state.controls3DDefaults.maxPolarAngle;
         }
+        state.controls.enablePan = true;
+        state.controls.screenSpacePanning = false;
         switchActiveCamera(state.perspectiveCamera);
-        animateCameraTo(new THREE.Vector3(4, 4, 4), new THREE.Vector3(0, 0, 0));
+        state.perspectiveCamera.position.set(0, 2, 8);
+        state.perspectiveCamera.lookAt(0, 0, 0);
+        state.controls.target.set(0, 0, 0);
+        state.controls.update();
+        if (state.transformControls) {
+            state.transformControls.visible = true;
+            state.transformControls.enabled = true;
+        }
+        // Restore uses stored state values (floorVisible / safeZoneVisible).
     }
+    syncEditorThemeCanvas();
     updateTransformControlsForViewMode();
-    showNotification(mode === '2d' ? '2D edit mode (orthographic)' : '3D view mode');
+    if (!sameMode) {
+        pulseViewportModeTransition();
+        showNotification(mode === '2d' ? '2D mode — Space + drag to pan' : '3D mode — orbit and inspect depth');
+    }
 }
 
 function syncViewModeUi() {
     const badge = document.getElementById('viewport-mode-badge');
     const modeToggle = document.getElementById('btn-view-mode-toggle');
+    const btn2d = document.getElementById('btn-view-mode-2d');
+    const btn3d = document.getElementById('btn-view-mode-3d');
     if (badge) badge.textContent = state.viewMode === '2d' ? '2D' : '3D';
+    if (btn2d && btn3d) {
+        btn2d.classList.toggle('active', state.viewMode === '2d');
+        btn3d.classList.toggle('active', state.viewMode === '3d');
+        btn2d.setAttribute('aria-pressed', state.viewMode === '2d' ? 'true' : 'false');
+        btn3d.setAttribute('aria-pressed', state.viewMode === '3d' ? 'true' : 'false');
+    }
+    const tb2d = document.getElementById('toolbar-view-mode-2d');
+    const tb3d = document.getElementById('toolbar-view-mode-3d');
+    if (tb2d && tb3d) {
+        tb2d.classList.toggle('active', state.viewMode === '2d');
+        tb3d.classList.toggle('active', state.viewMode === '3d');
+        tb2d.setAttribute('aria-pressed', state.viewMode === '2d' ? 'true' : 'false');
+        tb3d.setAttribute('aria-pressed', state.viewMode === '3d' ? 'true' : 'false');
+    }
     if (modeToggle) {
         const icon = modeToggle.querySelector('[data-lucide]');
         if (icon) icon.setAttribute('data-lucide', state.viewMode === '2d' ? 'box' : 'layout-dashboard');
-        if (window.lucide?.createIcons) window.lucide.createIcons();
+        modeToggle.setAttribute('title', state.viewMode === '2d' ? 'Switch to 3D mode' : 'Switch to 2D mode');
+        modeToggle.setAttribute('data-tooltip', state.viewMode === '2d' ? 'Switch to 3D mode' : 'Switch to 2D mode');
     }
+    initializeLucideIcons();
 }
 
 function apply2DBillboards() {
@@ -2876,17 +3213,44 @@ function syncFloorToggleButton() {
     btn.classList.toggle('active', !!state.floorVisible);
     btn.classList.toggle('is-off', !state.floorVisible);
     btn.setAttribute('aria-pressed', state.floorVisible ? 'true' : 'false');
-    btn.title = state.floorVisible ? 'Hide Floor/Grid' : 'Show Floor/Grid';
+    btn.title = 'Toggle floor grid';
+    btn.setAttribute('data-tooltip', 'Toggle floor grid');
 }
 
 function applyFloorVisibility() {
     if (!state.scene) return;
     const mainGrid = state.scene.getObjectByName('mainGrid');
     const ground = state.scene.getObjectByName('Ground');
-    if (mainGrid) mainGrid.visible = state.floorVisible && state.viewMode === '3d';
-    if (ground) ground.visible = state.floorVisible && state.viewMode === '3d';
-    if (state.grid2d) state.grid2d.visible = state.floorVisible && state.viewMode === '2d';
+    const safeZone = state.scene.getObjectByName('safeZone');
+    const axes = state.scene.children.find((obj) => obj && obj.type === 'AxesHelper');
+    const bgIsHdri = !!(state.scene.background && state.scene.background.isTexture);
+    if (state.viewMode === '3d') {
+        const guides = !!state.floorVisible;
+        const showFloorGuides = guides && !bgIsHdri;
+        if (mainGrid) mainGrid.visible = showFloorGuides;
+        if (ground) ground.visible = showFloorGuides;
+        if (safeZone) safeZone.visible = !!state.safeZoneVisible;
+        if (axes) axes.visible = true;
+        if (state.grid2d) state.grid2d.visible = false;
+    } else {
+        if (mainGrid) mainGrid.visible = false;
+        if (ground) ground.visible = false;
+        if (safeZone) safeZone.visible = false;
+        if (axes) axes.visible = false;
+        if (state.grid2d) state.grid2d.visible = !!state.floorVisible;
+    }
     syncFloorToggleButton();
+    syncSafeZoneToggleButton();
+}
+
+function syncSafeZoneToggleButton() {
+    const btn = document.getElementById('viewport-toggle-safe');
+    if (!btn) return;
+    btn.classList.toggle('active', !!state.safeZoneVisible);
+    btn.classList.toggle('is-off', !state.safeZoneVisible);
+    btn.setAttribute('aria-pressed', state.safeZoneVisible ? 'true' : 'false');
+    btn.title = 'Toggle safe zone';
+    btn.setAttribute('data-tooltip', 'Toggle safe zone');
 }
 
 function toggleFloorVisibility() {
@@ -2900,12 +3264,39 @@ function toggleGrid() {
 }
 
 function toggleSafeZone() {
-    const safeZone = state.scene.getObjectByName('safeZone');
-    if (safeZone) {
-        safeZone.visible = !safeZone.visible;
-        return safeZone.visible;
-    }
-    return false;
+    state.safeZoneVisible = !state.safeZoneVisible;
+    applyFloorVisibility();
+    return state.safeZoneVisible;
+}
+
+function installViewModeSegmentedControl() {
+    const existingToggle = document.getElementById('btn-view-mode-toggle');
+    if (!existingToggle || document.getElementById('btn-view-mode-2d')) return;
+    const host = existingToggle.parentElement;
+    if (!host) return;
+
+    const segment = document.createElement('div');
+    segment.id = 'view-mode-segment';
+    segment.className = 'view-mode-segment';
+
+    const btn2d = document.createElement('button');
+    btn2d.type = 'button';
+    btn2d.id = 'btn-view-mode-2d';
+    btn2d.className = 'view-mode-tab';
+    btn2d.textContent = '2D';
+    btn2d.addEventListener('click', () => setViewMode('2d'));
+
+    const btn3d = document.createElement('button');
+    btn3d.type = 'button';
+    btn3d.id = 'btn-view-mode-3d';
+    btn3d.className = 'view-mode-tab';
+    btn3d.textContent = '3D';
+    btn3d.addEventListener('click', () => setViewMode('3d'));
+
+    segment.appendChild(btn2d);
+    segment.appendChild(btn3d);
+    host.insertBefore(segment, existingToggle);
+    existingToggle.style.display = 'none';
 }
 
 // ===== SIDEBAR TAB SWITCHING =====
@@ -2921,6 +3312,7 @@ function initializeSidebarTabs() {
             tabContents.forEach(content => content.classList.remove('active'));
             document.getElementById(`${tabName}-tab`).classList.add('active');
             state.activeTab = tabName;
+            initializeLucideIcons();
         });
     });
 }
@@ -2959,6 +3351,16 @@ function initializeToolbar() {
             showNotification(`Tool: ${tool.charAt(0).toUpperCase() + tool.slice(1)}`);
         });
     });
+
+    document.getElementById('topbar-add-button')?.addEventListener('click', () => {
+        createXRButton('Button');
+        initializeLucideIcons();
+    });
+
+    document.getElementById('topbar-add-panel')?.addEventListener('click', () => {
+        createXRPanel();
+        initializeLucideIcons();
+    });
 }
 
 // ===== LAYER SELECTION =====
@@ -2987,6 +3389,7 @@ function showPropertiesPanel() {
         emptyState.style.display = 'none';
         propertiesSections.style.display = 'block';
     }
+    initializeLucideIcons();
 }
 
 function hidePropertiesPanel() {
@@ -2997,6 +3400,8 @@ function hidePropertiesPanel() {
         emptyState.style.display = 'flex';
         propertiesSections.style.display = 'none';
     }
+    updateImagePropertyPanel(null);
+    initializeLucideIcons();
 }
 
 function initializePropertySections() {
@@ -3038,6 +3443,7 @@ function initializePropertySections() {
 // ===== VIEWPORT CONTROLS =====
 function initializeViewportControls() {
     const viewPresetButtons = document.querySelectorAll('.viewport-controls [data-view-preset]');
+    installViewModeSegmentedControl();
 
     function setActiveViewPreset(activeBtn) {
         viewPresetButtons.forEach((btn) => btn.classList.remove('active'));
@@ -3070,6 +3476,10 @@ function initializeViewportControls() {
             setViewMode(state.viewMode === '2d' ? '3d' : '2d');
         });
     }
+    syncViewModeUi();
+
+    document.getElementById('toolbar-view-mode-2d')?.addEventListener('click', () => setViewMode('2d'));
+    document.getElementById('toolbar-view-mode-3d')?.addEventListener('click', () => setViewMode('3d'));
 
     const gridBtn = document.getElementById('viewport-toggle-grid');
     if (gridBtn) {
@@ -3080,11 +3490,12 @@ function initializeViewportControls() {
         syncFloorToggleButton();
     }
 
-    const colorPicker = document.getElementById('canvas-color-picker');
+    const colorPicker = document.getElementById('canvas-color-input');
     const colorReset = document.getElementById('canvas-color-reset');
     if (colorPicker) {
         colorPicker.addEventListener('input', (e) => {
             const hex = e.target.value;
+            updateCanvasColorSwatchUi(hex);
             const viewport = document.getElementById('viewport-3d');
             if (viewport) viewport.style.background = hex;
             state.defaultEditorBackground = new THREE.Color(hex);
@@ -3094,12 +3505,14 @@ function initializeViewportControls() {
             if (state.renderer) {
                 state.renderer.setClearColor(new THREE.Color(hex), 1);
             }
+            applyFloorVisibility();
+            initializeLucideIcons();
         });
     }
     if (colorReset) {
         colorReset.addEventListener('click', () => {
             const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-            const resetHex = isLight ? '#f5f5f5' : '#0d0d0d';
+            const resetHex = isLight ? '#f0f0f0' : '#141414';
             if (colorPicker) colorPicker.value = resetHex;
             if (colorPicker) colorPicker.dispatchEvent(new Event('input', { bubbles: true }));
         });
@@ -3108,10 +3521,10 @@ function initializeViewportControls() {
     const safeBtn = document.getElementById('viewport-toggle-safe');
     if (safeBtn) {
         safeBtn.addEventListener('click', () => {
-            safeBtn.classList.toggle('active');
             const isVisible = toggleSafeZone();
             showNotification(`Safe Zone: ${isVisible ? 'On' : 'Off'}`);
         });
+        syncSafeZoneToggleButton();
     }
 }
 
@@ -3227,32 +3640,17 @@ function showNotification(message) {
     if (!notification) {
         notification = document.createElement('div');
         notification.id = 'notification';
-        notification.style.cssText = `
-            position: fixed;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--color-bg-elevated);
-            color: var(--color-text-primary);
-            padding: 12px 24px;
-            border-radius: 8px;
-            border: 1px solid var(--color-border);
-            font-size: 13px;
-            z-index: 10000;
-            opacity: 0;
-            transition: opacity 0.2s ease;
-            box-shadow: var(--shadow-lg);
-        `;
+        notification.className = 'notification-toast';
         document.body.appendChild(notification);
     }
 
     clearTimeout(notificationTimeout);
     notification.textContent = message;
-    notification.style.opacity = '1';
+    notification.classList.add('is-visible');
 
     notificationTimeout = setTimeout(() => {
-        notification.style.opacity = '0';
-    }, 2000);
+        notification.classList.remove('is-visible');
+    }, 2500);
 }
 
 // ===== EXPORT / SAVE =====
@@ -3267,7 +3665,7 @@ function serializeObjectForVoid(o) {
         text: u.text || '',
         onClickScreenId: u.onClickScreenId || '',
         clickAnimation: u.clickAnimation || 'none',
-        transitionType: u.transitionType || 'instant',
+        transitionType: u.transitionType || 'fade',
         transitionDuration: u.transitionDuration ?? 300,
         transitionEasing: u.transitionEasing || 'ease-in-out',
         prototypeLinkTargetUuid: u.prototypeLinkTargetUuid || '',
@@ -3718,7 +4116,7 @@ function setupButtonAnimationListener() {
             const o = state.selectedObject;
             if (o && isInteractionVoidType(o.userData?.voidType)) {
                 ensureInteractionUserData(o.userData);
-                o.userData.transitionType = t.value || 'instant';
+                o.userData.transitionType = t.value || 'fade';
                 scheduleRemoteProjectSave();
             }
         });
@@ -3728,8 +4126,9 @@ function setupButtonAnimationListener() {
         const applyDur = () => {
             const o = state.selectedObject;
             if (o && isInteractionVoidType(o.userData?.voidType)) {
-                const v = Math.max(0, parseInt(d.value, 10) || 0);
+                const v = Math.min(2000, Math.max(0, parseInt(d.value, 10) || 0));
                 o.userData.transitionDuration = v;
+                d.value = String(v);
                 scheduleRemoteProjectSave();
             }
         };
@@ -3774,54 +4173,52 @@ function initializeAssets() {
     });
 }
 
-function initializeColors() {
-    const swatches = document.querySelectorAll('.color-swatch');
-    swatches.forEach(swatch => {
-        swatch.addEventListener('click', () => {
-            const color = swatch.style.background;
-            showNotification(`Color selected: ${color}`);
-        });
-    });
-}
-
 // ===== ENVIRONMENT PRESETS (optional design-time context) =====
 const ENVIRONMENT_PRESETS = [
     {
         id: 'living-room',
         name: 'Living Room',
         description: 'Warm interior context',
-        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/living_room_2k.hdr',
-        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/living_room_4k.hdr',
+        hdrUrls: [
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/living_room_2k.hdr',
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/living_room_4k.hdr',
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/old_room_2k.hdr'
+        ],
         previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/living_room.png?height=160'
     },
     {
         id: 'modern-office',
         name: 'Modern Office',
         description: 'Clean commercial lighting',
-        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/modern_office_2_2k.hdr',
-        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/modern_office_4k.hdr',
+        hdrUrls: [
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/modern_office_2_2k.hdr',
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/modern_office_4k.hdr',
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/office_2k.hdr'
+        ],
         previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/modern_office.png?height=160'
     },
     {
         id: 'bedroom',
         name: 'Bedroom',
         description: 'Calm personal interior',
-        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/hotel_room_2k.hdr',
-        fallbackUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/vintage_room_4k.hdr',
+        hdrUrls: [
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/2k/hotel_room_2k.hdr',
+            'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/vintage_room_4k.hdr'
+        ],
         previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/vintage_room.png?height=160'
     },
     {
         id: 'minimal-studio',
         name: 'Minimal Studio',
         description: 'Neutral controlled backdrop',
-        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/studio_small_08_4k.hdr',
+        hdrUrls: ['https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/studio_small_08_4k.hdr'],
         previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/studio_small_08.png?height=160'
     },
     {
         id: 'outdoor-space',
         name: 'Outdoor Space',
         description: 'Open daylight perspective',
-        imageUrl: 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/kloppenheim_06_4k.hdr',
+        hdrUrls: ['https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/kloppenheim_06_4k.hdr'],
         previewUrl: 'https://cdn.polyhaven.com/asset_img/thumbs/kloppenheim_06.png?height=160'
     }
 ];
@@ -3834,21 +4231,58 @@ function setEnvironmentLoading(loading, message = 'Loading environment...') {
     indicator.style.display = loading ? 'block' : 'none';
 }
 
-function loadHdriWithFallback(url, fallbackUrl, onLoad, onFail) {
+/** Try HDR URLs in order; disposes aborted textures if request stale. */
+function loadHdriFromUrlList(urls, requestId, onLoad, onFailAll) {
+    const list = (urls || []).filter(Boolean);
+    if (!list.length) {
+        onFailAll();
+        return;
+    }
     const loader = new RGBELoader();
     loader.setDataType(THREE.HalfFloatType);
-    loader.load(
-        url,
-        onLoad,
-        undefined,
-        () => {
-            if (!fallbackUrl || fallbackUrl === url) {
-                onFail();
-                return;
-            }
-            loader.load(fallbackUrl, onLoad, undefined, onFail);
+    let i = 0;
+    const tryNext = () => {
+        if (requestId !== state.environmentLoadRequestId) return;
+        if (i >= list.length) {
+            onFailAll();
+            return;
         }
-    );
+        const url = list[i++];
+        loader.load(
+            url,
+            (texture) => {
+                if (requestId !== state.environmentLoadRequestId) {
+                    texture.dispose();
+                    return;
+                }
+                onLoad(texture);
+            },
+            undefined,
+            () => tryNext()
+        );
+    };
+    tryNext();
+}
+
+function clearEnvironmentPlaceholder(presetId) {
+    const card = document.querySelector(`.environment-card[data-environment-id="${presetId}"]`);
+    if (!card) return;
+    card.classList.remove('environment-card--unavailable');
+    card.querySelector('.environment-card-ph-overlay')?.remove();
+}
+
+function showEnvironmentPlaceholder(presetId) {
+    const card = document.querySelector(`.environment-card[data-environment-id="${presetId}"]`);
+    if (!card) return;
+    card.classList.add('environment-card--unavailable');
+    let ph = card.querySelector('.environment-card-ph-overlay');
+    if (!ph) {
+        ph = document.createElement('div');
+        ph.className = 'environment-card-ph-overlay';
+        ph.innerHTML =
+            '<span class="environment-card-ph-text">Preview unavailable</span><span class="environment-card-ph-sub">Tap to retry</span>';
+        card.appendChild(ph);
+    }
 }
 
 function refreshEnvironmentPresetUi() {
@@ -3873,6 +4307,7 @@ function clearEnvironmentPreset(showToast = true) {
     if (state.viewMode === '3d') {
         state.scene.background = state.defaultEditorBackground || new THREE.Color(0x0f0f0f);
     }
+    applyFloorVisibility();
     refreshEnvironmentPresetUi();
     if (showToast) showNotification('Default canvas restored');
 }
@@ -3887,14 +4322,18 @@ function applyEnvironmentPreset(presetId) {
     const requestId = ++state.environmentLoadRequestId;
     setEnvironmentLoading(true);
 
-    loadHdriWithFallback(
-        preset.imageUrl,
-        preset.fallbackUrl,
+    const hdrUrls =
+        preset.hdrUrls || [preset.imageUrl, preset.fallbackUrl].filter((u) => typeof u === 'string' && u);
+
+    loadHdriFromUrlList(
+        hdrUrls,
+        requestId,
         (texture) => {
             if (requestId !== state.environmentLoadRequestId) {
                 texture.dispose();
                 return;
             }
+            clearEnvironmentPlaceholder(preset.id);
             if (state.environmentTexture) state.environmentTexture.dispose();
             texture.mapping = THREE.EquirectangularReflectionMapping;
             texture.minFilter = THREE.LinearFilter;
@@ -3906,13 +4345,15 @@ function applyEnvironmentPreset(presetId) {
             state.scene.background = state.viewMode === '2d' ? null : texture;
             state.activeEnvironmentPresetId = preset.id;
             setEnvironmentLoading(false);
+            applyFloorVisibility();
             refreshEnvironmentPresetUi();
             showNotification(`Environment: ${preset.name}`);
         },
         () => {
             if (requestId !== state.environmentLoadRequestId) return;
             setEnvironmentLoading(false, 'Environment unavailable');
-            showNotification('Environment unavailable');
+            showEnvironmentPlaceholder(preset.id);
+            showNotification('Loading failed — check connection');
         }
     );
 }
@@ -3977,9 +4418,9 @@ function setEditorMode(mode) {
     state.editorMode = mode;
 
     document.getElementById('btn-mode-design')?.classList.toggle('active', mode === 'design');
-    document.getElementById('btn-mode-prototype')?.classList.toggle('active', mode === 'prototype');
+    document.getElementById('prototype-mode-btn')?.classList.toggle('active', mode === 'prototype');
     document.getElementById('btn-mode-design')?.setAttribute('aria-pressed', mode === 'design' ? 'true' : 'false');
-    document.getElementById('btn-mode-prototype')?.setAttribute('aria-pressed', mode === 'prototype' ? 'true' : 'false');
+    document.getElementById('prototype-mode-btn')?.setAttribute('aria-pressed', mode === 'prototype' ? 'true' : 'false');
 
     const exitBtn = document.getElementById('btn-exit-prototype');
     if (exitBtn) {
@@ -3988,11 +4429,13 @@ function setEditorMode(mode) {
     }
 
     if (mode === 'prototype') {
-        showNotification('Prototype Mode — click buttons to navigate linked screens');
+        showNotification('Prototype mode — click elements to test navigation');
     } else if (prev === 'prototype') {
         showNotification('Design Mode');
     }
 
+    initializeLucideIcons();
+    pulseViewportModeTransition();
     updateTransformControlsForViewMode();
 }
 
@@ -4557,9 +5000,9 @@ function closeSpatialPreview() {
 
 function initializeEditorModeAndSpatialPreview() {
     document.getElementById('btn-mode-design')?.addEventListener('click', () => setEditorMode('design'));
-    document.getElementById('btn-mode-prototype')?.addEventListener('click', () => setEditorMode('prototype'));
+    document.getElementById('prototype-mode-btn')?.addEventListener('click', () => setEditorMode('prototype'));
     document.getElementById('btn-exit-prototype')?.addEventListener('click', () => setEditorMode('design'));
-    document.getElementById('btn-spatial-preview')?.addEventListener('click', () => openSpatialPreview());
+    document.getElementById('spatial-preview-btn')?.addEventListener('click', () => openSpatialPreview());
     document.getElementById('spatial-preview-close')?.addEventListener('click', () => closeSpatialPreview());
 }
 
@@ -4633,6 +5076,8 @@ function ensureEditorExperienceInitialized() {
     setTimeout(() => {
         showNotification('Editor ready — same Void canvas as before onboarding');
     }, 400);
+
+    setViewMode('2d');
 }
 
 /**
@@ -4641,6 +5086,7 @@ function ensureEditorExperienceInitialized() {
 function setAppPhase(phase) {
     const allowed = ['login', 'dashboard', 'editor'];
     if (!allowed.includes(phase)) return;
+    const prev = state.appPhase;
     state.appPhase = phase;
 
     const login = document.getElementById('phase-login');
@@ -4653,11 +5099,23 @@ function setAppPhase(phase) {
     if (editor) editor.hidden = phase !== 'editor';
     if (nav) nav.hidden = phase === 'login';
 
+    if (phase === 'login') {
+        initLoginScene();
+        stopTopNavStarfield();
+    } else if (prev === 'login' && phase !== 'login') {
+        disposeLoginScene();
+    }
+
+    if (phase === 'dashboard' || phase === 'editor') {
+        requestAnimationFrame(() => initTopNavStarfield());
+    }
+
     if (phase === 'editor') {
         ensureEditorExperienceInitialized();
         requestAnimationFrame(() => {
             onWindowResize();
         });
+        scheduleEditorTutorialOnce();
     }
 }
 
@@ -4665,7 +5123,13 @@ function initializeOnboardingFlow() {
     document.getElementById('btn-onboarding-login')?.addEventListener('click', () => {
         setAppPhase('dashboard');
     });
+    document.getElementById('btn-onboarding-guest')?.addEventListener('click', () => {
+        setAppPhase('editor');
+    });
     document.getElementById('btn-onboarding-create-project')?.addEventListener('click', () => {
+        setAppPhase('editor');
+    });
+    document.getElementById('dashboard-new-project-card')?.addEventListener('click', () => {
         setAppPhase('editor');
     });
     document.getElementById('app-nav-dashboard')?.addEventListener('click', () => {
@@ -4680,9 +5144,11 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('🚀 XR Spatial UI Designer Initialized');
     initializeThemeToggle();
     initializeLucideIcons();
+    applyGlobalTooltips();
     initializePropertySectionIcons();
 
     initializeOnboardingFlow();
+    initializeHelpTutorialMenu();
 
     initializeSidebarTabs();
     initializeToolbar();
@@ -4700,11 +5166,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeFrameTextPresetModal();
     initializeEditorModeAndSpatialPreview();
 
-    initializeColors();
     initializeScreensUI();
     initializeEnvironmentsUI();
     initializePropertySectionIcons();
     initializeLucideIcons();
+    applyGlobalTooltips();
+    updateViewportEmptyState();
     initializeIPhoneQuickLookEntry();
 
     // 3D viewport + scene: deferred until setAppPhase('editor') — see ensureEditorExperienceInitialized().
@@ -4712,9 +5179,26 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Initial state:', state);
 
     initVoidRemoteSync();
+    setAppPhase('login');
 });
 
 // ===== EXPORT FOR DEBUGGING =====
+function initializeHelpTutorialMenu() {
+    document.getElementById('menu-restart-tutorial')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        teardownTutorial();
+        document.querySelectorAll('.tutorial-done-modal').forEach((el) => el.remove());
+        if (state.appPhase !== 'editor') {
+            showNotification('Open a project first, then use Help → Restart tutorial.');
+            return;
+        }
+        if (!state.editorExperienceInitialized) ensureEditorExperienceInitialized();
+        initTutorial();
+        showNotification('Tutorial restarted');
+        initializeLucideIcons();
+    });
+}
+
 window.XRSpatialUI = {
     state,
     showNotification,
@@ -4735,7 +5219,8 @@ window.XRSpatialUI = {
     createScreen,
     switchToScreen,
     setAppPhase,
-    ensureEditorExperienceInitialized
+    ensureEditorExperienceInitialized,
+    initTutorial
 };
 
 // ===== APPEARANCE CONTROLS =====
@@ -4756,6 +5241,10 @@ function initializeAppearanceControls() {
             }
         });
     }
+
+    document.getElementById('btn-change-image')?.addEventListener('click', () => {
+        openImageFilePicker(state.selectedObject);
+    });
     
     // Opacity Slider
     const opacitySlider = document.getElementById('object-opacity');
