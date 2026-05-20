@@ -3158,4 +3158,77 @@ select,
 /* ===== PHASE 15: PHONE EDIT/PLAY TOGGLE ===== */
 .phone-mode-pill { position: absolute; bottom: 18px; right: 18px; background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 999px; padding: 4px; display: flex; gap: 4px; }
 .phone-mode-pill button { padding: 6px 14px; border-radius: 999px; border: none; background: transparent; color: #cbd5e1; font: 13px Inter, sans-serif; cursor: pointer; }
-.phone-mode-pill button.active { background: #4f46e5; color: #fff; }
+
+/* ===== AR PREVIEW OVERLAY ===== */
+#ar-overlay {
+    display: none;               /* hidden by default; shown via JS when XR session starts */
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    pointer-events: none;        /* pass taps through to XR select by default */
+}
+
+.ar-mode-badge {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    background: rgba(79, 70, 229, 0.85);
+    color: #fff;
+    font: 600 12px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 999px;
+    pointer-events: none;
+}
+
+.ar-mode-badge--3dof {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid #334155;
+}
+
+.ar-placement-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.ar-placement-hint p {
+    margin: 0;
+    font: 500 17px/1.4 Inter, system-ui, sans-serif;
+    color: #fff;
+    text-align: center;
+    background: rgba(15, 23, 42, 0.65);
+    padding: 12px 22px;
+    border-radius: 12px;
+    max-width: 260px;
+}
+
+.ar-controls {
+    position: absolute;
+    bottom: 32px;
+    left: 0;
+    right: 0;
+    display: none;               /* shown after first placement */
+    justify-content: center;
+    gap: 12px;
+    pointer-events: auto;
+}
+
+.ar-btn {
+    padding: 10px 20px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(15, 23, 42, 0.8);
+    color: #e2e8f0;
+    font: 500 14px Inter, system-ui, sans-serif;
+    cursor: pointer;
+}
+
+.ar-btn-exit {
+    background: rgba(239, 68, 68, 0.75);
+    border-color: rgba(239, 68, 68, 0.4);
+}
