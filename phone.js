@@ -177,29 +177,66 @@ function applySnapshot(msg) {
         `cam pos: ${phoneState.threeCamera.position.x.toFixed(2)}, ${phoneState.threeCamera.position.y.toFixed(2)}, ${phoneState.threeCamera.position.z.toFixed(2)}`;
 }
 
-function autoFrameSnapshot(root) {
-    const cam = phoneState.threeCamera;
+/**
+ * Place `root` so its bounding-box centre sits ~1.5 m in front of `cam`
+ * at the camera's eye height, scaled to fit in a 1 m cube.
+ * Works for both the non-XR camera (device-orientation mode) and the
+ * XR ArrayCamera returned by renderer.xr.getCamera().
+ */
+function frameRootInFrontOfCamera(root, cam) {
     if (!cam) return;
+    root.scale.set(1, 1, 1);
+    root.position.set(0, 0, 0);
     root.updateMatrixWorld(true);
+
     const box = new THREE.Box3().setFromObject(root);
     if (box.isEmpty()) return;
+
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
     box.getCenter(center);
     box.getSize(size);
+
+    // Scale so the largest axis ≈ 1 m (keeps UI elements a natural size).
     const maxDim = Math.max(size.x, size.y, size.z, 0.001);
-    const targetSize = 1.0;
-    const fit = targetSize / maxDim;
+    const fit = 1.0 / maxDim;
     root.scale.setScalar(fit);
-    // Centroid in world after scaling lands at center * fit relative to current root pos (0,0,0).
-    // We want the scaled centroid at camPos + camForward * 1.5.
-    const camPos = cam.position.clone();
-    const targetWorld = camPos.clone().add(new THREE.Vector3(0, 0, -1.5));
+
+    // Camera forward in world space (horizontal component only so we don't
+    // place content above/below the user when the phone is tilted).
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    forward.y = 0;
+    if (forward.lengthSq() < 0.001) forward.set(0, 0, -1); // safety: phone pointing straight up
+    forward.normalize();
+
+    // Target: 1.5 m ahead, at camera eye-height.
+    const camPos = new THREE.Vector3();
+    cam.getWorldPosition(camPos);
+    const targetWorld = camPos.clone().addScaledVector(forward, 1.5);
+    targetWorld.y = camPos.y; // match eye height
+
+    // Position root so scaled centroid lands at targetWorld.
     root.position.set(
         targetWorld.x - center.x * fit,
         targetWorld.y - center.y * fit,
         targetWorld.z - center.z * fit
     );
+}
+
+function autoFrameSnapshot(root) {
+    frameRootInFrontOfCamera(root, phoneState.threeCamera);
+}
+
+/**
+ * AR placement: called on XR tap-to-place.
+ * Uses the live XR camera pose (not the hit-test floor point) so objects
+ * always appear 1.5 m in front of the user's gaze at eye height,
+ * regardless of editor-space Z offsets.
+ */
+function arFrameSnapshot(root) {
+    // renderer.xr.getCamera() returns the ArrayCamera with the current XR pose.
+    const xrCam = phoneState.threeRenderer?.xr?.getCamera() ?? phoneState.threeCamera;
+    frameRootInFrontOfCamera(root, xrCam);
 }
 
 function onPhoneSceneSync(data) {
@@ -449,12 +486,14 @@ function onXrFrame(timestamp, frame) {
 onXrFrame._lastPoseSend = 0;
 
 function onXrSelect() {
-    if (phoneState.scenePlaced) return;           // already placed — ignore until Reset
-    if (!phoneState.reticle?.visible) return;     // no surface detected yet
+    if (phoneState.scenePlaced) return;       // already placed — ignore until Reset
+    if (!phoneState.reticle?.visible) return; // no surface detected yet
 
-    const pos = new THREE.Vector3().setFromMatrixPosition(phoneState.reticle.matrix);
     if (phoneState.snapshotRoot) {
-        phoneState.snapshotRoot.position.copy(pos);
+        // Place content 1.5 m in front of the user at their eye height using
+        // the current XR camera pose. This overrides editor-space Z offsets
+        // (e.g. Z=-3 from 2D mode) so objects are always in a visible location.
+        arFrameSnapshot(phoneState.snapshotRoot);
         phoneState.snapshotRoot.visible = true;
     }
     phoneState.scenePlaced = true;
