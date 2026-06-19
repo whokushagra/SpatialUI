@@ -2815,6 +2815,70 @@ function updatePrototypeLinkOverlay() {
     // Drag-to-connect overlay removed.
 }
 
+function updateQRTracking() {
+    if (state.spatialPreviewKind !== 'camera' || !state.spatialPreviewActive) return;
+    const video = document.getElementById('spatial-preview-video');
+    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+    if (typeof window.jsQR === 'undefined') return;
+
+    if (!state.qrCanvas) {
+        state.qrCanvas = document.createElement('canvas');
+        state.qrCtx = state.qrCanvas.getContext('2d');
+    }
+
+    const width = 480;
+    const height = Math.round(video.videoHeight * (width / video.videoWidth));
+    if (width > 0 && height > 0) {
+        state.qrCanvas.width = width;
+        state.qrCanvas.height = height;
+        state.qrCtx.drawImage(video, 0, 0, width, height);
+
+        try {
+            const imgData = state.qrCtx.getImageData(0, 0, width, height);
+            const code = window.jsQR(imgData.data, imgData.width, imgData.height);
+
+            const activeGroup = getActiveScreenGroup();
+            if (!activeGroup) return;
+
+            if (code) {
+                const pose = estimateQRPose(code, width, height);
+                if (pose) {
+                    if (!state.originalScreenPoses) {
+                        state.originalScreenPoses = new Map();
+                    }
+                    if (!state.originalScreenPoses.has(activeGroup.uuid)) {
+                        state.originalScreenPoses.set(activeGroup.uuid, {
+                            position: activeGroup.position.clone(),
+                            quaternion: activeGroup.quaternion.clone(),
+                            scale: activeGroup.scale.clone(),
+                            parent: activeGroup.parent
+                        });
+                    }
+
+                    const offsetZ = 0.08; // 8cm offset in front of QR code
+                    const localZ = new THREE.Vector3(0, 0, 1).applyMatrix4(pose.rotMatrix);
+                    const targetPos = pose.center.clone().add(localZ.multiplyScalar(offsetZ));
+
+                    activeGroup.position.lerp(targetPos, 0.2);
+                    const targetQuat = new THREE.Quaternion().setFromRotationMatrix(pose.rotMatrix);
+                    activeGroup.quaternion.slerp(targetQuat, 0.2);
+
+                    updateSpatialPreviewHint('QR Code Anchor Locked! Walk around it to preview.');
+                    state.qrTrackerLastSeen = Date.now();
+                }
+            } else {
+                const lastSeen = state.qrTrackerLastSeen || 0;
+                if (Date.now() - lastSeen > 2500) {
+                    updateSpatialPreviewHint('Point camera at the QR code on your screen to anchor UI.');
+                }
+            }
+        } catch (e) {
+            console.error('QR tracking error:', e);
+        }
+    }
+}
+
 // ===== ANIMATION LOOP =====
 function animate() {
     requestAnimationFrame(animate);
@@ -2829,6 +2893,10 @@ function animate() {
     updatePrototypeLinkOverlay();
 
     if (state.spatialPreviewKind === 'xr') return;
+
+    if (state.spatialPreviewKind === 'camera') {
+        updateQRTracking();
+    }
 
     if (state.renderer && state.scene && state.camera) {
         // Spatial preview: UI (screens/frames) stays visible; environment uses .visible=false at open (no per-frame cost).
@@ -4573,7 +4641,11 @@ function openDesktopMobilePreviewShareDialog() {
         return;
     }
 
-    const base = `${window.location.origin}${window.location.pathname}`;
+    let base = `${window.location.origin}${window.location.pathname}`;
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && typeof __MAC_LAN_IP__ !== 'undefined' && __MAC_LAN_IP__ !== 'localhost') {
+        const networkHost = `${__MAC_LAN_IP__}:${window.location.port || '8000'}`;
+        base = `${window.location.protocol}//${networkHost}${window.location.pathname}`;
+    }
     const shareUrl = `${base}?voidMobilePreview=1#v=${encodeURIComponent(payload)}`;
     const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`;
 
@@ -4656,22 +4728,111 @@ function initializeIPhoneQuickLookEntry() {
         right: 12px;
         bottom: 12px;
         z-index: 11000;
-        background: rgba(15,23,42,0.94);
+        background: rgba(15,23,42,0.95);
         border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 12px;
+        border-radius: 12px;
+        padding: 16px;
         color: #e2e8f0;
-        font: 13px/1.4 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        font: 13px/1.4 Figtree, Inter, system-ui, -apple-system, sans-serif;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     `;
     launcher.innerHTML = `
-        <div style="font-weight:600;margin-bottom:6px;">iPhone AR Preview Ready</div>
-        <div style="color:#94a3b8;margin-bottom:10px;">Tap to open AR Quick Look and place this UI on a real floor or wall.</div>
-        <button id="void-mobile-ar-launch-btn" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#4f46e5;color:white;font-weight:600;cursor:pointer;">Launch AR on this iPhone</button>
+        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">iPhone AR Preview Ready</div>
+        <div style="color:#94a3b8; margin-bottom:12px; font-size:12px;">Choose how you want to experience the spatial layout on this iPhone:</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <button id="void-mobile-web-ar-btn" style="width:100%; padding:11px 12px; border-radius:8px; border:none; background:#6b6bff; color:white; font-weight:600; cursor:pointer; font-size:13px; font-family: inherit;">
+                Launch Web AR (QR Code Anchor)
+            </button>
+            <button id="void-mobile-ar-launch-btn" style="width:100%; padding:11px 12px; border-radius:8px; border:1px solid #334155; background:#1e293b; color:#cbd5e1; font-weight:600; cursor:pointer; font-size:13px; font-family: inherit;">
+                Launch AR Quick Look (Surface Placement)
+            </button>
+        </div>
     `;
     document.body.appendChild(launcher);
+
+    launcher.querySelector('#void-mobile-web-ar-btn')?.addEventListener('click', () => {
+        launcher.remove();
+        openSpatialPreview(true);
+    });
+
     launcher.querySelector('#void-mobile-ar-launch-btn')?.addEventListener('click', () => {
+        launcher.remove();
         launchQuickLookForActiveScreen();
     });
+}
+function estimateQRPose(code, videoWidth, videoHeight) {
+    const corners = [
+        code.location.topLeftCorner,
+        code.location.topRightCorner,
+        code.location.bottomRightCorner,
+        code.location.bottomLeftCorner
+    ];
+
+    const cx = videoWidth / 2;
+    const cy = videoHeight / 2;
+    const f = Math.max(videoWidth, videoHeight) * 0.85;
+    const W = 0.15; // 15 cm QR code size
+
+    const rays = corners.map(pt => {
+        return new THREE.Vector3(
+            (pt.x - cx) / f,
+            -(pt.y - cy) / f,
+            -1
+        ).normalize();
+    });
+
+    const dist2D_top = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+    const dist2D_bottom = Math.hypot(corners[2].x - corners[3].x, corners[2].y - corners[3].y);
+    const dist2D_left = Math.hypot(corners[0].x - corners[3].x, corners[0].y - corners[3].y);
+    const dist2D_right = Math.hypot(corners[1].x - corners[2].x, corners[1].y - corners[2].y);
+    const avgDist2D = (dist2D_top + dist2D_bottom + dist2D_left + dist2D_right) / 4;
+
+    const initialZ = (f * W) / Math.max(1, avgDist2D);
+    let Zs = [initialZ, initialZ, initialZ, initialZ];
+    
+    const edges = [[0, 1], [1, 2], [2, 3], [3, 0]];
+    const iterations = 40;
+    const lr = 0.05;
+
+    for (let iter = 0; iter < iterations; iter++) {
+        const C = Zs.map((z, i) => rays[i].clone().multiplyScalar(z));
+        let grads = [0, 0, 0, 0];
+        
+        for (const [i, j] of edges) {
+            const diff = C[i].clone().sub(C[j]);
+            const distSq = diff.lengthSq();
+            const Wsq = W * W;
+            const error = distSq - Wsq;
+            
+            grads[i] += error * diff.dot(rays[i]);
+            grads[j] -= error * diff.dot(rays[j]);
+        }
+        
+        for (let i = 0; i < 4; i++) {
+            Zs[i] -= lr * grads[i];
+            Zs[i] = Math.max(0.1, Math.min(10.0, Zs[i]));
+        }
+    }
+
+    const C = Zs.map((z, i) => rays[i].clone().multiplyScalar(z));
+    const center = new THREE.Vector3();
+    C.forEach(pt => center.add(pt));
+    center.divideScalar(4);
+
+    const xDir1 = C[1].clone().sub(C[0]);
+    const xDir2 = C[2].clone().sub(C[3]);
+    const x_axis = xDir1.add(xDir2).normalize();
+
+    const yDir1 = C[0].clone().sub(C[3]);
+    const yDir2 = C[1].clone().sub(C[2]);
+    const y_axis = yDir1.add(yDir2).normalize();
+
+    const z_axis = new THREE.Vector3().crossVectors(x_axis, y_axis).normalize();
+    const orthogonal_y = new THREE.Vector3().crossVectors(z_axis, x_axis).normalize();
+
+    const rotMatrix = new THREE.Matrix4().makeBasis(x_axis, orthogonal_y, z_axis);
+
+    return { center, rotMatrix };
 }
 
 function createSpatialReticle() {
@@ -4882,7 +5043,7 @@ function teardownSpatialPreviewXR({ endSession = false } = {}) {
     state.spatialXR = null;
 }
 
-async function openSpatialPreview() {
+async function openSpatialPreview(forceWebAR = false) {
     const overlay = document.getElementById('spatial-preview-overlay');
     const video = document.getElementById('spatial-preview-video');
     const host = document.getElementById('spatial-preview-canvas-host');
@@ -4898,7 +5059,7 @@ async function openSpatialPreview() {
         }
 
         // iPhone Safari: Quick Look gives the most reliable room-anchored AR today.
-        if (isIPhoneSafari()) {
+        if (isIPhoneSafari() && !forceWebAR) {
             await launchQuickLookForActiveScreen();
             return;
         }
@@ -4940,13 +5101,41 @@ async function openSpatialPreview() {
         // Hide floor, grids, axes, safe zone — only UI frames/components draw over the camera.
         enterSpatialPreviewEnvironment();
 
+        // Save camera pose and controls state before overriding them
+        state.savedCameraPosition = state.camera.position.clone();
+        state.savedCameraQuaternion = state.camera.quaternion.clone();
+        state.savedControlsTarget = state.controls ? state.controls.target.clone() : null;
+        state.savedControlsEnabled = state.controls ? state.controls.enabled : true;
+
+        if (state.controls) state.controls.enabled = false;
+        state.camera.position.set(0, 0, 0);
+        state.camera.quaternion.set(0, 0, 0, 1);
+
+        // On iOS Safari in Web AR mode, show a switch button to native Quick Look
+        if (isIPhoneSafari()) {
+            const chrome = document.querySelector('#spatial-preview-overlay .spatial-preview-chrome');
+            if (chrome && !document.getElementById('spatial-preview-ql-switch')) {
+                const qlBtn = document.createElement('button');
+                qlBtn.type = 'button';
+                qlBtn.className = 'btn-primary';
+                qlBtn.id = 'spatial-preview-ql-switch';
+                qlBtn.style.cssText = 'margin-left:12px; padding:8px 12px; border-radius:8px; border:none; background:#4f46e5; color:white; font-size:12px; font-weight:600; cursor:pointer;';
+                qlBtn.textContent = 'Switch to iOS Quick Look';
+                qlBtn.addEventListener('click', () => {
+                    closeSpatialPreview();
+                    launchQuickLookForActiveScreen();
+                });
+                chrome.appendChild(qlBtn);
+            }
+        }
+
         host.appendChild(state.renderer.domElement);
         state.spatialPreviewActive = true;
         overlay.classList.add('is-open');
         overlay.setAttribute('aria-hidden', 'false');
         onWindowResize();
 
-        updateSpatialPreviewHint('Move your camera slowly to feel the depth');
+        updateSpatialPreviewHint('Point camera at the QR code on your screen to anchor UI.');
         showNotification('Spatial preview');
         updateTransformControlsForViewMode();
     } catch (err) {
@@ -4975,6 +5164,37 @@ function closeSpatialPreview() {
     if (state.renderer?.domElement && mainVp) {
         mainVp.appendChild(state.renderer.domElement);
     }
+
+    // Clean up iOS Quick Look switcher button
+    const qlBtn = document.getElementById('spatial-preview-ql-switch');
+    if (qlBtn) qlBtn.remove();
+
+    // Restore original screen group position and orientation
+    if (state.originalScreenPoses) {
+        for (const [uuid, pose] of state.originalScreenPoses.entries()) {
+            const screen = state.screens.find(s => s.group.uuid === uuid);
+            if (screen) {
+                screen.group.position.copy(pose.position);
+                screen.group.quaternion.copy(pose.quaternion);
+                screen.group.scale.copy(pose.scale);
+            }
+        }
+        state.originalScreenPoses = null;
+    }
+
+    // Restore original camera pose and controls state
+    if (state.savedCameraPosition) {
+        state.camera.position.copy(state.savedCameraPosition);
+        state.camera.quaternion.copy(state.savedCameraQuaternion);
+        state.savedCameraPosition = null;
+    }
+    if (state.controls && state.savedControlsTarget) {
+        state.controls.target.copy(state.savedControlsTarget);
+        state.controls.enabled = state.savedControlsEnabled;
+        state.controls.update();
+        state.savedControlsTarget = null;
+    }
+
     // Restore ground / grid / guides before moving renderer back to the main viewport.
     exitSpatialPreviewEnvironment();
     if (state.scene) {
