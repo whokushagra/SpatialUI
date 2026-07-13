@@ -555,6 +555,66 @@ input, select {
     max-width: 240px;
 }
 
+/* ===== Template picker ===== */
+.templates-back-link {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--void-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 18px 24px 0;
+    transition: color 150ms ease;
+}
+
+.templates-back-link:hover {
+    color: var(--void-accent);
+}
+
+.templates-intro {
+    margin: -8px 24px 16px;
+    max-width: 640px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--void-text-tertiary);
+}
+
+.template-card-thumb {
+    position: relative;
+    background:
+        radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--tpl-accent) 26%, transparent) 0%, transparent 60%),
+        var(--void-bg-elevated);
+    border-bottom: 1px solid var(--void-border);
+}
+
+.template-card-glyph {
+    width: 58px;
+    height: 58px;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--tpl-accent) 45%, transparent);
+    opacity: 0.95;
+}
+
+.template-card-screens {
+    position: absolute;
+    bottom: 10px;
+    right: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--void-text-secondary);
+    background: color-mix(in srgb, var(--void-bg-base) 70%, transparent);
+    border: 1px solid var(--void-border);
+    border-radius: 5px;
+    padding: 2px 7px;
+}
+
+.template-card:hover .template-card-glyph {
+    transform: translateY(-2px) scale(1.04);
+    transition: transform 200ms ease;
+}
+
 .phase-editor-wrap[hidden] {
     display: none !important;
 }
@@ -3106,4 +3166,595 @@ select,
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
     cursor: pointer !important;
     font-family: inherit !important;
+}
+
+/* ===== Mobile (iPhone) preview: screen selector + tap-through play ===== */
+.void-mobile-selector {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background:
+        radial-gradient(120% 90% at 50% -10%, rgba(99, 102, 241, 0.25) 0%, transparent 55%),
+        #070912;
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+    color: #e2e8f0;
+    padding: env(safe-area-inset-top, 18px) 16px calc(env(safe-area-inset-bottom, 18px) + 24px);
+    box-sizing: border-box;
+}
+
+.vms-card {
+    max-width: 540px;
+    margin: 0 auto;
+    padding-top: 28px;
+}
+
+.vms-brand {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.32em;
+    color: #818cf8;
+}
+
+.vms-title {
+    margin: 8px 0 6px;
+    font-size: 30px;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.1;
+}
+
+.vms-tagline {
+    margin: 0 0 22px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #94a3b8;
+}
+
+.vms-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.vms-mode {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: 14px;
+    background: rgba(30, 41, 59, 0.5);
+    color: #e2e8f0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.vms-mode:active {
+    transform: scale(0.99);
+}
+
+.vms-mode--primary {
+    border: none;
+    background: linear-gradient(135deg, #6366f1, #4338ca);
+    color: #fff;
+    box-shadow: 0 12px 30px rgba(79, 70, 229, 0.4);
+}
+
+.vms-mode--ar {
+    background: rgba(20, 184, 166, 0.12);
+    border-color: rgba(20, 184, 166, 0.4);
+}
+
+.vms-mode-icon {
+    flex: 0 0 40px;
+    height: 40px;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.vms-mode--ar .vms-mode-icon {
+    color: #5eead4;
+    background: rgba(20, 184, 166, 0.2);
+}
+
+.vms-mode-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.vms-mode-title {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.vms-mode-sub {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.8;
+    line-height: 1.35;
+}
+
+.vms-section-label {
+    margin: 26px 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+
+.vms-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.vms-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 14px 14px 16px;
+    border-radius: 12px;
+    background: rgba(30, 41, 59, 0.55);
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    cursor: pointer;
+}
+
+.vms-row:active {
+    background: rgba(51, 65, 85, 0.7);
+}
+
+.vms-index {
+    flex: 0 0 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #c7d2fe;
+    background: rgba(99, 102, 241, 0.18);
+}
+
+.vms-meta {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.vms-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f1f5f9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vms-sub {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
+.vms-ar-btn {
+    flex: 0 0 auto;
+    padding: 9px 14px;
+    border-radius: 9px;
+    border: 1px solid rgba(129, 140, 248, 0.55);
+    background: rgba(99, 102, 241, 0.16);
+    color: #c7d2fe;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.vms-ar-btn:active {
+    background: rgba(99, 102, 241, 0.3);
+}
+
+.vms-fallback {
+    display: block;
+    width: 100%;
+    margin-top: 22px;
+    padding: 12px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 13px;
+    font-family: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+/* VOID AR — fullscreen markerless WebAR overlay (engine renders into its own canvas). */
+.void-ar-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 14000;
+    background: #000;
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+}
+
+.void-ar-canvas {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    display: block !important;
+    margin: 0 !important;
+}
+
+.void-ar-top {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 10px) + 10px);
+    left: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 2;
+}
+
+.void-ar-brand {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(8, 11, 20, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.void-ar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.void-ar-exit,
+.void-ar-move {
+    padding: 9px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(8, 11, 20, 0.55);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.void-ar-move {
+    border-color: rgba(129, 140, 248, 0.7);
+    background: rgba(99, 102, 241, 0.85);
+}
+
+.void-ar-gear {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(8, 11, 20, 0.55);
+    color: #fff;
+    font-size: 17px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.void-ar-tune {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 10px) + 64px);
+    right: 12px;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(78vw, 280px);
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(8, 11, 20, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+}
+
+.void-ar-tune-row {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+    color: #e8edf5;
+}
+
+.void-ar-tune-row span {
+    display: flex;
+    justify-content: space-between;
+}
+
+.void-ar-tune-row b {
+    color: #a5b4fc;
+    font-weight: 700;
+}
+
+.void-ar-tune input[type='range'] {
+    width: 100%;
+    accent-color: #6366f1;
+}
+
+.void-ar-hint {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: calc(env(safe-area-inset-bottom, 16px) + 22px);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 16px;
+    background: rgba(8, 11, 20, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #e8edf5;
+    font-size: 14px;
+    text-align: center;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.void-ar-spinner {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #818cf8;
+    animation: vml-spin 0.8s linear infinite;
+}
+
+/* Template preview harness — clean app/screen tabs at the top for fast iteration. */
+.void-preview-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 12800;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 16px;
+    background: linear-gradient(180deg, rgba(5, 7, 13, 0.96), rgba(5, 7, 13, 0));
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+    pointer-events: none;
+}
+
+.void-preview-bar .vpb-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+.vpb-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    color: #6b7688;
+    margin-right: 4px;
+}
+
+.vpb-tab,
+.vpb-screen {
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: rgba(22, 28, 43, 0.7);
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.vpb-screen {
+    font-size: 12px;
+    padding: 6px 12px;
+    color: #9aa6b8;
+}
+
+.vpb-tab.is-on {
+    background: #6366f1;
+    border-color: #6366f1;
+    color: #fff;
+}
+
+.vpb-screen.is-on {
+    background: rgba(99, 102, 241, 0.22);
+    border-color: rgba(129, 140, 248, 0.6);
+    color: #e2e8f0;
+}
+
+/* Phone viewer: hide ALL editor chrome from the first paint (no login/editor flash). */
+body.void-mobile-viewer .menu-bar,
+body.void-mobile-viewer .sidebar-left,
+body.void-mobile-viewer #properties-panel,
+body.void-mobile-viewer #floating-toolbar,
+body.void-mobile-viewer #app-top-nav,
+body.void-mobile-viewer #btn-exit-prototype,
+body.void-mobile-viewer #phase-login,
+body.void-mobile-viewer #phase-dashboard,
+body.void-mobile-viewer #phase-templates,
+body.void-mobile-viewer #tutorial-overlay {
+    display: none !important;
+}
+
+/* The 3D viewport fills the whole screen in the phone viewer. */
+body.void-mobile-viewer #phase-editor,
+body.void-mobile-viewer .app-container,
+body.void-mobile-viewer .editor-main,
+body.void-mobile-viewer .viewport-container {
+    inset: 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+body.void-mobile-viewer #viewport-3d {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    border-radius: 0 !important;
+}
+
+body.void-mobile-viewer {
+    background: #05070d !important;
+}
+
+/* Brief loading screen shown while the scene streams in. */
+.void-mobile-loading {
+    position: fixed;
+    inset: 0;
+    z-index: 13000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    background:
+        radial-gradient(120% 90% at 50% 0%, rgba(99, 102, 241, 0.22) 0%, transparent 55%),
+        #05070d;
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+}
+
+.vml-brand {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.34em;
+    color: #818cf8;
+}
+
+.vml-spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(148, 163, 184, 0.25);
+    border-top-color: #818cf8;
+    animation: vml-spin 0.8s linear infinite;
+}
+
+@keyframes vml-spin {
+    to { transform: rotate(360deg); }
+}
+
+.vml-msg {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.void-mobile-loading.is-error .vml-msg {
+    color: #fca5a5;
+}
+
+/* Minimal top-of-prototype control bar (project name + restart + AR). */
+.void-mobile-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: calc(env(safe-area-inset-top, 10px) + 10px);
+    z-index: 12500;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px 9px 16px;
+    border-radius: 999px;
+    background: rgba(8, 11, 20, 0.78);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    font-family: Figtree, Inter, system-ui, -apple-system, sans-serif;
+}
+
+.vmb-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8edf5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vmb-spacer {
+    flex: 1 1 auto;
+}
+
+.vmb-btn {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(30, 41, 59, 0.55);
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.vmb-btn--accent {
+    border: none;
+    background: #6366f1;
+    color: #fff;
+}
+
+.vmb-btn:active {
+    transform: scale(0.97);
+}
+
+.vms-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    background: rgba(30, 41, 59, 0.6);
+    color: #e2e8f0;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.vms-ar-go {
+    flex: 0 0 auto;
+    font-size: 14px;
+    font-weight: 600;
+    color: #c7d2fe;
 }

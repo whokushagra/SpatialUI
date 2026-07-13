@@ -4,3 +4,5 @@ dist/
 *.backup
 .env
 .env.local
+.gstack/
+package-lock.json

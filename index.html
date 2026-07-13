@@ -14,6 +14,16 @@
 </head>
 
 <body>
+    <!-- A scanned QR (?voidMobilePreview=1) is the phone viewer. Flag it before first
+         paint so the login/editor chrome never flashes on screen. -->
+    <script>
+        (function () {
+            var q = new URLSearchParams(location.search);
+            if (q.get('voidMobilePreview') === '1' || q.get('voidPreview') === '1') {
+                document.body.classList.add('void-mobile-viewer');
+            }
+        })();
+    </script>
     <!-- Dummy onboarding (paper prototype): Login → Dashboard → existing editor unchanged inside #phase-editor -->
     <nav id="app-top-nav" class="app-top-nav" hidden aria-label="App navigation">
         <div class="app-top-nav-inner">
@@ -130,6 +140,26 @@
                 </article>
             </div>
             <button type="button" class="btn-primary dashboard-create-btn" id="btn-onboarding-create-project">Create New Project</button>
+        </div>
+    </section>
+
+    <section id="phase-templates" class="onboarding-phase onboarding-dashboard" hidden aria-label="New Project">
+        <header class="dashboard-header">
+            <div class="dashboard-brand">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.5" />
+                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" />
+                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" />
+                </svg>
+                <span class="dashboard-brand-text">Void</span>
+            </div>
+            <h2 class="dashboard-heading">New Project</h2>
+        </header>
+        <div class="dashboard-body">
+            <button type="button" class="templates-back-link" id="templates-back">‹ Back to dashboard</button>
+            <h3 class="dashboard-section-title">Start from a template</h3>
+            <p class="templates-intro">Each template is a fully designed, multi-screen prototype — open it, then preview the tap-through flow on your headset or iPhone.</p>
+            <div class="dashboard-project-grid" id="templates-grid" aria-label="Templates"></div>
         </div>
     </section>
 

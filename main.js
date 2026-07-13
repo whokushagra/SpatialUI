@@ -6,6 +6,8 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
 import { scheduleRemoteProjectSave, initVoidRemoteSync } from './voidRemoteSync.js';
 import { initLoginScene, disposeLoginScene } from './loginScene.js';
+import { VOID_TEMPLATES, buildTemplateExport } from './templates.js';
+import { isVoidARSupported, startVoidAR, stopVoidAR } from './voidAR.js';
 
 // ===== APPLICATION STATE =====
 const state = {
@@ -1124,6 +1126,8 @@ let tutorialIntroTimeoutId = null;
 
 /** Show tutorial after every navigation into the editor (no localStorage “seen” flag). */
 function scheduleEditorTutorialOnce() {
+    // No tutorial in the phone viewer — it's a clean, chrome-free prototype player.
+    if (document.body.classList.contains('void-mobile-viewer')) return;
     if (tutorialIntroTimeoutId) clearTimeout(tutorialIntroTimeoutId);
     tutorialIntroTimeoutId = setTimeout(() => {
         tutorialIntroTimeoutId = null;
@@ -2212,6 +2216,273 @@ function makeTextTexture(text, w = 512, h = 128, textColor = '#ffffff', bg = 'rg
     return tex;
 }
 
+// ===== Modern spatial-UI polish helpers (rounded corners, glass, art, text) =====
+function roundedRectShape(w, h, r) {
+    const radius = Math.max(0.0001, Math.min(r, w / 2, h / 2));
+    const x = -w / 2;
+    const y = -h / 2;
+    const s = new THREE.Shape();
+    s.moveTo(x + radius, y);
+    s.lineTo(x + w - radius, y);
+    s.quadraticCurveTo(x + w, y, x + w, y + radius);
+    s.lineTo(x + w, y + h - radius);
+    s.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    s.lineTo(x + radius, y + h);
+    s.quadraticCurveTo(x, y + h, x, y + h - radius);
+    s.lineTo(x, y + radius);
+    s.quadraticCurveTo(x, y, x + radius, y);
+    s.closePath();
+    return s;
+}
+
+function roundedRectGeometry(w, h, r) {
+    const g = new THREE.ShapeGeometry(roundedRectShape(w, h, r), 16);
+    // ShapeGeometry sets UVs to raw vertex coords; remap to 0..1 across the box so
+    // textures (procedural art / images) map correctly onto rounded planes.
+    const pos = g.attributes.position;
+    const uv = g.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+        uv.setXY(i, (pos.getX(i) + w / 2) / w, (pos.getY(i) + h / 2) / h);
+    }
+    uv.needsUpdate = true;
+    return g;
+}
+
+function roundedRectLineGeometry(w, h, r) {
+    const pts = roundedRectShape(w, h, r).getPoints(96);
+    return new THREE.BufferGeometry().setFromPoints(pts);
+}
+
+// Text canvas resolution scaled to the element's real size, so a given fontSize maps
+// to a CONSISTENT world height on every element (titles, buttons, tiny pills alike).
+const TEXT_PPU = 1150;
+function textCanvasDims(wWorld, hWorld, lines = 1) {
+    return {
+        wPx: Math.min(2048, Math.max(64, Math.round(wWorld * TEXT_PPU))),
+        hPx: Math.min(2048, Math.max(48, Math.round(hWorld * TEXT_PPU * lines)))
+    };
+}
+
+function glassPanelMaterial(color, opacity = 0.9) {
+    return new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color),
+        metalness: 0.0,
+        roughness: 0.6,
+        transparent: true,
+        opacity,
+        side: THREE.DoubleSide
+    });
+}
+
+/** Soft drop-shadow plane placed slightly behind a card for floating depth. */
+function makeSoftShadowMesh(w, h, r) {
+    const pad = 0.12;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    const g = ctx.createRadialGradient(128, 132, 20, 128, 132, 128);
+    g.addColorStop(0, 'rgba(0,0,0,0.55)');
+    g.addColorStop(0.6, 'rgba(0,0,0,0.28)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 256, 256);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(w + pad * 2, h + pad * 2),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    );
+    mesh.position.set(0, -0.02, -0.012);
+    mesh.renderOrder = -1;
+    return mesh;
+}
+
+/**
+ * Canvas text texture with alignment, multi-line, and weight control. Returns
+ * { texture, aspect } so callers can size the plane to the text without stretching.
+ */
+function makeRichTextTexture(opts = {}) {
+    const text = opts.text == null ? '' : String(opts.text);
+    const align = opts.align || 'center';
+    const weight = opts.weight || '600';
+    const color = opts.color || '#ffffff';
+    const fontSize = opts.fontSize || 64;
+    const lineHeight = opts.lineHeight || 1.2;
+    const font = opts.font || 'Inter, system-ui, -apple-system, sans-serif';
+    const wPx = opts.wPx || 1024;
+    const hPx = opts.hPx || 256;
+    const padX = opts.padX != null ? opts.padX : 16;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = wPx;
+    canvas.height = hPx;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.font = `${weight} ${fontSize}px ${font}`;
+    ctx.textBaseline = 'middle';
+
+    const lines = text.split('\n');
+    const lh = fontSize * lineHeight;
+    const totalH = lh * lines.length;
+    let y = hPx / 2 - totalH / 2 + lh / 2;
+    for (const ln of lines) {
+        let x;
+        if (align === 'left') {
+            ctx.textAlign = 'left';
+            x = padX;
+        } else if (align === 'right') {
+            ctx.textAlign = 'right';
+            x = wPx - padX;
+        } else {
+            ctx.textAlign = 'center';
+            x = wPx / 2;
+        }
+        ctx.fillText(ln, x, y);
+        y += lh;
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    tex.needsUpdate = true;
+    return tex;
+}
+
+/** Procedural, offline, poster-style artwork for image components. */
+function makeArtTexture(kind = 'gradient', accent = '#4f46e5', wPx = 1024, hPx = 640) {
+    const canvas = document.createElement('canvas');
+    canvas.width = wPx;
+    canvas.height = hPx;
+    const ctx = canvas.getContext('2d');
+    const A = new THREE.Color(accent);
+    const shade = (mult) => {
+        const c = A.clone();
+        c.r = Math.min(1, c.r * mult);
+        c.g = Math.min(1, c.g * mult);
+        c.b = Math.min(1, c.b * mult);
+        return `#${c.getHexString()}`;
+    };
+
+    if (kind === 'landscape' || kind === 'map') {
+        const sky = ctx.createLinearGradient(0, 0, 0, hPx);
+        sky.addColorStop(0, '#1a2740');
+        sky.addColorStop(0.55, shade(0.7));
+        sky.addColorStop(1, shade(1.1));
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, wPx, hPx);
+        // soft sun glow
+        const sun = ctx.createRadialGradient(wPx * 0.74, hPx * 0.3, 8, wPx * 0.74, hPx * 0.3, hPx * 0.5);
+        sun.addColorStop(0, 'rgba(255,240,210,0.85)');
+        sun.addColorStop(1, 'rgba(255,240,210,0)');
+        ctx.fillStyle = sun;
+        ctx.fillRect(0, 0, wPx, hPx);
+        // layered mountain ridges
+        const ridge = (baseY, amp, col) => {
+            ctx.beginPath();
+            ctx.moveTo(0, hPx);
+            for (let x = 0; x <= wPx; x += wPx / 8) {
+                const yy = baseY + Math.sin(x / wPx * Math.PI * 2) * amp - (x % (wPx / 3)) * 0.04;
+                ctx.lineTo(x, yy);
+            }
+            ctx.lineTo(wPx, hPx);
+            ctx.closePath();
+            ctx.fillStyle = col;
+            ctx.fill();
+        };
+        ridge(hPx * 0.52, 36, shade(0.5));
+        ridge(hPx * 0.66, 30, shade(0.4));
+        ridge(hPx * 0.8, 22, shade(0.3));
+        if (kind === 'map') {
+            ctx.strokeStyle = '#f97316';
+            ctx.lineWidth = Math.max(6, wPx / 120);
+            ctx.lineCap = 'round';
+            ctx.setLineDash([wPx / 40, wPx / 60]);
+            ctx.beginPath();
+            ctx.moveTo(wPx * 0.15, hPx * 0.85);
+            ctx.bezierCurveTo(wPx * 0.4, hPx * 0.6, wPx * 0.55, hPx * 0.75, wPx * 0.85, hPx * 0.4);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    } else if (kind === 'product') {
+        const bg = ctx.createLinearGradient(0, 0, wPx, hPx);
+        bg.addColorStop(0, shade(0.5));
+        bg.addColorStop(1, '#0b0f1a');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, wPx, hPx);
+        const glow = ctx.createRadialGradient(wPx / 2, hPx * 0.46, 10, wPx / 2, hPx * 0.46, hPx * 0.55);
+        glow.addColorStop(0, shade(1.2));
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, wPx, hPx);
+        ctx.globalAlpha = 1;
+        // simple device silhouette (rounded headphone-ish ring)
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.lineWidth = wPx / 26;
+        ctx.beginPath();
+        ctx.arc(wPx / 2, hPx * 0.52, hPx * 0.26, Math.PI * 1.05, Math.PI * 1.95);
+        ctx.stroke();
+        ctx.lineCap = 'round';
+        ctx.lineWidth = wPx / 16;
+        [-1, 1].forEach((s) => {
+            ctx.beginPath();
+            ctx.moveTo(wPx / 2 + s * hPx * 0.25, hPx * 0.5);
+            ctx.lineTo(wPx / 2 + s * hPx * 0.25, hPx * 0.66);
+            ctx.stroke();
+        });
+        // floor reflection
+        const refl = ctx.createRadialGradient(wPx / 2, hPx * 0.92, 4, wPx / 2, hPx * 0.92, wPx * 0.3);
+        refl.addColorStop(0, 'rgba(255,255,255,0.18)');
+        refl.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = refl;
+        ctx.fillRect(0, hPx * 0.7, wPx, hPx * 0.3);
+    } else if (kind === 'avatar') {
+        const bg = ctx.createLinearGradient(0, 0, wPx, hPx);
+        bg.addColorStop(0, shade(1.05));
+        bg.addColorStop(1, shade(0.55));
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, wPx, hPx);
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.beginPath();
+        ctx.arc(wPx / 2, hPx * 0.4, Math.min(wPx, hPx) * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(wPx / 2, hPx * 1.02, Math.min(wPx, hPx) * 0.36, Math.PI, 0);
+        ctx.fill();
+    } else {
+        // 'calm' / 'gradient' — dark dawn gradient with a glowing orb + breathing rings.
+        const bg = ctx.createLinearGradient(0, 0, 0, hPx);
+        bg.addColorStop(0, '#0a1020');
+        bg.addColorStop(0.5, shade(0.45));
+        bg.addColorStop(1, shade(0.9));
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, wPx, hPx);
+        const ox = wPx * 0.5;
+        const oy = hPx * 0.6;
+        // concentric breathing rings
+        ctx.lineWidth = Math.max(2, wPx / 360);
+        for (let i = 5; i >= 1; i--) {
+            ctx.beginPath();
+            ctx.arc(ox, oy, hPx * 0.12 * i, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255,255,255,${0.05 + i * 0.012})`;
+            ctx.stroke();
+        }
+        // glowing orb
+        const orb = ctx.createRadialGradient(ox, oy, 2, ox, oy, hPx * 0.28);
+        orb.addColorStop(0, '#ffffff');
+        orb.addColorStop(0.25, shade(1.25));
+        orb.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = orb;
+        ctx.fillRect(0, 0, wPx, hPx);
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    tex.needsUpdate = true;
+    return tex;
+}
+
 function isChildOfFrame(object) {
     return !!(object.parent && object.parent.userData && object.parent.userData.voidType === 'frame');
 }
@@ -2696,9 +2967,12 @@ function updatePrototypeLinkLines() {
     const g = state.prototypeLinksGroup;
     if (!g || !state.scene) return;
 
+    // Link lines are a design-mode authoring aid only — never in Play/prototype,
+    // spatial preview, or the chrome-free phone viewer.
     const showLinks =
-        (state.editorMode === 'design' || state.editorMode === 'prototype') &&
+        state.editorMode === 'design' &&
         !state.spatialPreviewActive &&
+        !document.body.classList.contains('void-mobile-viewer') &&
         (state.viewMode === '3d' || state.viewMode === '2d');
 
     while (g.children.length > 0) {
@@ -2894,7 +3168,7 @@ function animate() {
 
     if (state.spatialPreviewKind === 'xr') return;
 
-    if (state.spatialPreviewKind === 'camera') {
+    if (state.spatialPreviewKind === 'camera' && state.spatialPreviewQRMode) {
         updateQRTracking();
     }
 
@@ -3742,6 +4016,22 @@ function serializeObjectForVoid(o) {
         rotation: { x: o.rotation.x, y: o.rotation.y, z: o.rotation.z },
         scale: { x: o.scale.x, y: o.scale.y, z: o.scale.z }
     };
+    // Round-trip the full styling set so saved / mobile-previewed projects keep their
+    // exact look (rounded corners, glass, art, aligned text, pills, shadows, …).
+    const style = u._style || {};
+    const STYLE_KEYS = [
+        'color', 'opacity', 'radius', 'border', 'borderColor', 'borderOpacity', 'shadow',
+        'textColor', 'textFontSize', 'textBg', 'align', 'weight', 'variant', 'glow',
+        'chip', 'chipOpacity', 'art', 'fillColor', 'fillOpacity'
+    ];
+    STYLE_KEYS.forEach((k) => {
+        const v = style[k] != null ? style[k] : u[k];
+        if (v != null) base[k] = v;
+    });
+    if (u.planarBaseHalf && u.voidType !== 'frame') {
+        base.width = u.planarBaseHalf.x * 2;
+        base.height = u.planarBaseHalf.y * 2;
+    }
     if (u.voidType === 'frame') {
         base.frameWidth = u.frameWidth;
         base.frameHeight = u.frameHeight;
@@ -3766,6 +4056,7 @@ function buildVoidExport() {
         version: 1,
         void: true,
         exportedAt: new Date().toISOString(),
+        projectName: state.currentProjectName || 'Untitled',
         activeScreenId: state.activeScreenId,
         screens
     };
@@ -3841,6 +4132,18 @@ function applyVoidTransform(o, data) {
     if (data.scale) o.scale.set(data.scale.x, data.scale.y, data.scale.z);
 }
 
+// Optional styling helpers for imported components. All fields are optional so
+// older exports (and the live editor) keep their original look. Templates use
+// them to give each project a distinct, professional palette.
+function voidColor(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
+    try {
+        return new THREE.Color(value);
+    } catch (_) {
+        return fallback;
+    }
+}
+
 function buildImportedPrimitive(data) {
     const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(0.5, 0.5, 0.5),
@@ -3871,25 +4174,63 @@ function buildImportedButton(data) {
     group.userData.transitionEasing = data.transitionEasing;
     ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
-    group.userData.textFontSize = 56;
-    group.userData.textColor = '#ffffff';
+    group.userData.textFontSize = data.textFontSize || 56;
+    group.userData.textColor = data.textColor || '#ffffff';
+    group.userData.color = data.color || '#4f46e5';
 
-    const w = 0.72;
-    const h = 0.22;
+    const w = data.width != null ? data.width : 0.72;
+    const h = data.height != null ? data.height : 0.22;
     group.userData.planarBaseHalf = { x: w / 2, y: h / 2 };
-    const d = 0.03;
+    group.userData.radius = data.radius != null ? data.radius : Math.min(h / 2, 0.06);
+    group.userData.variant = data.variant || 'solid';
+    const r = group.userData.radius;
+
+    // Rounded, flat pill — modern spatial-UI button.
+    const baseColor = voidColor(data.color, new THREE.Color(0x4f46e5));
+    const isGhost = group.userData.variant === 'ghost';
     const bg = new THREE.Mesh(
-        new THREE.BoxGeometry(w, h, d),
-        new THREE.MeshStandardMaterial({ color: 0x4f46e5, metalness: 0.25, roughness: 0.55 })
+        roundedRectGeometry(w, h, r),
+        new THREE.MeshStandardMaterial({
+            color: baseColor,
+            metalness: 0.0,
+            roughness: 0.55,
+            transparent: true,
+            opacity: isGhost ? (data.opacity != null ? data.opacity : 0.16) : (data.opacity != null ? data.opacity : 1),
+            emissive: baseColor,
+            emissiveIntensity: data.glow != null ? data.glow : (isGhost ? 0 : 0.06),
+            side: THREE.DoubleSide
+        })
     );
     group.add(bg);
 
-    const tex = makeTextTexture(label, 512, 128, group.userData.textColor, 'rgba(0,0,0,0)', group.userData.textFontSize);
+    if (isGhost) {
+        const ol = new THREE.Line(
+            roundedRectLineGeometry(w, h, r),
+            new THREE.LineBasicMaterial({ color: baseColor, transparent: true, opacity: 0.85 })
+        );
+        ol.position.z = 0.001;
+        group.add(ol);
+    }
+
+    const align = data.align || 'center';
+    const tfW = w * 0.9;
+    const tfH = h * 0.62;
+    const tdim = textCanvasDims(tfW, tfH);
+    const tex = makeRichTextTexture({
+        text: label,
+        align,
+        weight: data.weight || '600',
+        color: group.userData.textColor,
+        fontSize: group.userData.textFontSize,
+        wPx: tdim.wPx,
+        hPx: tdim.hPx,
+        padX: 24
+    });
     const fg = new THREE.Mesh(
-        new THREE.PlaneGeometry(w * 0.92, h * 0.72),
+        new THREE.PlaneGeometry(tfW, tfH),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true })
     );
-    fg.position.z = d / 2 + 0.002;
+    fg.position.z = 0.004;
     group.add(fg);
 
     applyVoidTransform(group, data);
@@ -3909,19 +4250,39 @@ function buildImportedPanel(data) {
     group.userData.transitionEasing = data.transitionEasing;
     ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
-    group.userData.planarBaseHalf = { x: 0.6, y: 0.4 };
+    const pw = data.width != null ? data.width : 1.2;
+    const ph = data.height != null ? data.height : 0.8;
+    group.userData.planarBaseHalf = { x: pw / 2, y: ph / 2 };
+    group.userData.color = data.color || '#1e293b';
+    group.userData.radius = data.radius != null ? data.radius : 0.09;
+    const pr = group.userData.radius;
+
+    // Soft drop shadow behind the card for floating depth (cards opt in).
+    if (data.shadow) {
+        group.add(makeSoftShadowMesh(pw, ph, pr));
+    }
 
     const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(1.2, 0.8, 0.04),
-        new THREE.MeshStandardMaterial({
-            color: 0x1e293b,
-            metalness: 0.15,
-            roughness: 0.85,
-            transparent: true,
-            opacity: 0.92
-        })
+        roundedRectGeometry(pw, ph, pr),
+        glassPanelMaterial(
+            voidColor(data.color, new THREE.Color(0x1e293b)),
+            data.opacity != null ? data.opacity : 0.92
+        )
     );
     group.add(mesh);
+
+    // Hairline rounded border so cards read crisp in AR / preview.
+    const pborder = new THREE.Line(
+        roundedRectLineGeometry(pw, ph, pr),
+        new THREE.LineBasicMaterial({
+            color: voidColor(data.borderColor, new THREE.Color(0x64748b)),
+            transparent: true,
+            opacity: data.borderOpacity != null ? data.borderOpacity : 0.55
+        })
+    );
+    pborder.position.z = 0.004;
+    group.add(pborder);
+
     applyVoidTransform(group, data);
     return group;
 }
@@ -3941,16 +4302,42 @@ function buildImportedText(data) {
     ensureInteractionUserData(group.userData);
     group.userData.text = text;
     group.userData.selectable = true;
-    group.userData.textFontSize = 56;
-    group.userData.textColor = '#e2e8f0';
-    group.userData.textBg = 'rgba(15,23,42,0.35)';
-    group.userData.planarBaseHalf = { x: 0.5, y: 0.125 };
+    group.userData.textFontSize = data.textFontSize || 56;
+    group.userData.textColor = data.textColor || '#e2e8f0';
+    group.userData.textBg = data.textBg != null ? data.textBg : 'transparent';
+    group.userData.align = data.align || 'center';
+    const tw = data.width != null ? data.width : 1;
+    const th = data.height != null ? data.height : 0.25;
+    group.userData.planarBaseHalf = { x: tw / 2, y: th / 2 };
 
-    const tex = makeTextTexture(text, 1024, 256, group.userData.textColor, group.userData.textBg, group.userData.textFontSize);
+    // Optional rounded chip/pill background (e.g. for tags).
+    if (data.chip) {
+        const cr = data.radius != null ? data.radius : Math.min(th / 2, 0.06);
+        const chip = new THREE.Mesh(
+            roundedRectGeometry(tw, th, cr),
+            glassPanelMaterial(voidColor(data.chip, new THREE.Color(0x334155)), data.chipOpacity != null ? data.chipOpacity : 1)
+        );
+        chip.position.z = -0.001;
+        group.add(chip);
+    }
+
+    const lines = String(text).split('\n').length;
+    const tdim = textCanvasDims(tw, th);
+    const tex = makeRichTextTexture({
+        text,
+        align: group.userData.align,
+        weight: data.weight || '600',
+        color: group.userData.textColor,
+        fontSize: group.userData.textFontSize,
+        wPx: tdim.wPx,
+        hPx: tdim.hPx,
+        padX: data.chip ? 18 : 10
+    });
     const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(1, 0.25),
+        new THREE.PlaneGeometry(tw, th),
         new THREE.MeshBasicMaterial({ map: tex, transparent: true })
     );
+    plane.position.z = 0.004;
     group.add(plane);
     applyVoidTransform(group, data);
     return group;
@@ -3969,29 +4356,45 @@ function buildImportedImage(data) {
     group.userData.transitionEasing = data.transitionEasing;
     ensureInteractionUserData(group.userData);
     group.userData.selectable = true;
+    group.userData.color = data.color || '#334155';
+    group.userData.art = data.art || null;
 
-    const w = 0.9;
-    const h = 0.55;
+    const w = data.width != null ? data.width : 0.9;
+    const h = data.height != null ? data.height : 0.55;
     group.userData.planarBaseHalf = { x: w / 2, y: h / 2 };
-    const frame = new THREE.Mesh(
-        new THREE.PlaneGeometry(w, h),
-        new THREE.MeshStandardMaterial({
-            color: 0x334155,
+    const ir = data.radius != null ? data.radius : 0.07;
+
+    let fillMat;
+    if (data.art) {
+        // Procedural poster-style artwork (offline, reliable) keyed to an accent color.
+        const tex = makeArtTexture(data.art, data.color || '#4f46e5', 1024, Math.round((h / w) * 1024));
+        fillMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+    } else {
+        fillMat = new THREE.MeshStandardMaterial({
+            color: voidColor(data.color, new THREE.Color(0x334155)),
             metalness: 0.1,
             roughness: 0.9,
             transparent: true,
-            opacity: 0.85
-        })
-    );
+            opacity: data.opacity != null ? data.opacity : 0.9,
+            side: THREE.DoubleSide
+        });
+    }
+    const frame = new THREE.Mesh(roundedRectGeometry(w, h, ir), fillMat);
+    group.userData._imagePlateMesh = frame;
     group.add(frame);
 
-    const edges = new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h));
-    const lines = new THREE.LineSegments(
-        edges,
-        new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.9 })
-    );
-    lines.position.z = 0.002;
-    group.add(lines);
+    if (data.border !== false) {
+        const lines = new THREE.Line(
+            roundedRectLineGeometry(w, h, ir),
+            new THREE.LineBasicMaterial({
+                color: voidColor(data.borderColor, new THREE.Color(0xcbd5e1)),
+                transparent: true,
+                opacity: data.borderOpacity != null ? data.borderOpacity : 0.35
+            })
+        );
+        lines.position.z = 0.003;
+        group.add(lines);
+    }
 
     applyVoidTransform(group, data);
     return group;
@@ -4019,24 +4422,29 @@ function buildImportedFrame(data, screenIdForScope) {
     group.userData.transitionEasing = data.transitionEasing;
     ensureInteractionUserData(group.userData);
 
+    const fr = data.radius != null ? data.radius : 0.08;
     const fillMat = new THREE.MeshStandardMaterial({
-        color: 0x0f172a,
+        color: voidColor(data.fillColor, new THREE.Color(0x0f172a)),
         transparent: true,
-        opacity: 0.45,
+        opacity: data.fillOpacity != null ? data.fillOpacity : 0.45,
         metalness: 0,
         roughness: 1,
         side: THREE.DoubleSide
     });
-    const fill = new THREE.Mesh(new THREE.PlaneGeometry(width, height), fillMat);
+    group.userData.fillColor = data.fillColor || '#0f172a';
+    const fill = new THREE.Mesh(roundedRectGeometry(width, height, fr), fillMat);
     group.add(fill);
     group.userData.frameFill = fill;
 
-    const edgeGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, height));
-    const border = new THREE.LineSegments(
-        edgeGeo,
-        new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.95 })
+    const border = new THREE.Line(
+        roundedRectLineGeometry(width, height, fr),
+        new THREE.LineBasicMaterial({
+            color: voidColor(data.borderColor, new THREE.Color(0x64748b)),
+            transparent: true,
+            opacity: 0.9
+        })
     );
-    border.position.z = 0.002;
+    border.position.z = 0.003;
     group.add(border);
     group.userData.frameBorder = border;
 
@@ -4066,13 +4474,16 @@ function buildImportedFrame(data, screenIdForScope) {
 
 function buildVoidObjectTreeFromData(data, screenIdForScope) {
     const t = data.type;
-    if (t === 'button') return buildImportedButton(data);
-    if (t === 'panel') return buildImportedPanel(data);
-    if (t === 'text') return buildImportedText(data);
-    if (t === 'image') return buildImportedImage(data);
-    if (t === 'frame') return buildImportedFrame(data, screenIdForScope);
-    if (t === 'primitive') return buildImportedPrimitive(data);
-    return buildImportedPrimitive(data);
+    let obj;
+    if (t === 'button') obj = buildImportedButton(data);
+    else if (t === 'panel') obj = buildImportedPanel(data);
+    else if (t === 'text') obj = buildImportedText(data);
+    else if (t === 'image') obj = buildImportedImage(data);
+    else if (t === 'frame') obj = buildImportedFrame(data, screenIdForScope);
+    else obj = buildImportedPrimitive(data);
+    // Remember the styling inputs so save/export/mobile-preview round-trips the look.
+    if (obj && obj.userData) obj.userData._style = data;
+    return obj;
 }
 
 function applyVoidImport(exportObj) {
@@ -4546,6 +4957,20 @@ function isIPhoneSafari() {
     return isIPhone && isSafari;
 }
 
+/**
+ * True only where AR Quick Look actually works (iOS Safari with <a rel="ar"> support).
+ * On Android / desktop the USDZ link merely downloads a file, so we hide the AR option
+ * everywhere else. This is the official Apple feature-detection.
+ */
+function supportsQuickLookAR() {
+    const ua = navigator.userAgent || '';
+    const isAppleMobile = /iPhone|iPad|iPod/i.test(ua) ||
+        (/Macintosh/i.test(ua) && 'ontouchend' in document); // iPadOS desktop UA
+    if (!isAppleMobile) return false;
+    const a = document.createElement('a');
+    return !!(a.relList && a.relList.supports && a.relList.supports('ar'));
+}
+
 function encodeMobilePreviewPayload(data) {
     try {
         return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
@@ -4564,9 +4989,39 @@ function decodeMobilePreviewPayload(raw) {
     }
 }
 
-function getMobilePreviewPayloadFromUrl() {
+/**
+ * Publish a scene for mobile preview. Prefers the dev-server handoff (returns a tiny
+ * id so the QR stays small/scannable); falls back to an inline base64 hash for builds
+ * without the middleware (only viable for small scenes).
+ */
+async function publishMobilePreviewPayload(exportObj) {
+    try {
+        const res = await fetch('/__void_preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(exportObj)
+        });
+        if (res.ok) {
+            const { id } = await res.json();
+            if (id) return { mode: 'pid', value: id };
+        }
+    } catch (_) {}
+    return { mode: 'inline', value: encodeMobilePreviewPayload(exportObj) };
+}
+
+async function getMobilePreviewPayloadFromUrl() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('voidMobilePreview') !== '1') return null;
+
+    const pid = params.get('pid');
+    if (pid) {
+        try {
+            const res = await fetch(`/__void_preview?id=${encodeURIComponent(pid)}`);
+            if (res.ok) return await res.json();
+        } catch (_) {}
+        return null;
+    }
+
     const hash = window.location.hash || '';
     const raw = hash.startsWith('#v=') ? hash.slice(3) : '';
     return decodeMobilePreviewPayload(raw);
@@ -4634,9 +5089,9 @@ async function launchQuickLookForActiveScreen() {
     }
 }
 
-function openDesktopMobilePreviewShareDialog() {
-    const payload = encodeMobilePreviewPayload(buildVoidExport());
-    if (!payload) {
+async function openDesktopMobilePreviewShareDialog() {
+    const handoff = await publishMobilePreviewPayload(buildVoidExport());
+    if (!handoff || !handoff.value) {
         showNotification('Could not prepare mobile preview link.');
         return;
     }
@@ -4646,7 +5101,11 @@ function openDesktopMobilePreviewShareDialog() {
         const networkHost = `${__MAC_LAN_IP__}:${window.location.port || '8000'}`;
         base = `${window.location.protocol}//${networkHost}${window.location.pathname}`;
     }
-    const shareUrl = `${base}?voidMobilePreview=1#v=${encodeURIComponent(payload)}`;
+    // Server handoff → short ?pid= URL (small, reliably scannable). Inline → base64 hash.
+    const shareUrl =
+        handoff.mode === 'pid'
+            ? `${base}?voidMobilePreview=1&pid=${handoff.value}`
+            : `${base}?voidMobilePreview=1#v=${encodeURIComponent(handoff.value)}`;
     const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`;
 
     const old = document.getElementById('void-mobile-preview-share');
@@ -4678,8 +5137,8 @@ function openDesktopMobilePreviewShareDialog() {
         pointer-events: auto;
     `;
     card.innerHTML = `
-        <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Open iPhone AR Preview</div>
-        <p style="margin:0 0 10px 0;color:#94a3b8;">Scan this QR on iPhone Safari. It opens Quick Look AR with your current screen.</p>
+        <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Open on iPhone</div>
+        <p style="margin:0 0 10px 0;color:#94a3b8;">Scan with iPhone Camera. Opens the live, interactive prototype — tap buttons to move between screens, or place any screen in AR.</p>
         <div style="display:flex;justify-content:center;margin:8px 0 12px;">
             <img src="${qrSrc}" alt="Preview QR" width="220" height="220" style="border-radius:8px;border:1px solid #334155;background:#fff;" />
         </div>
@@ -4710,54 +5169,223 @@ function openDesktopMobilePreviewShareDialog() {
     });
 }
 
-function initializeIPhoneQuickLookEntry() {
-    const payload = getMobilePreviewPayloadFromUrl();
-    if (!payload) return;
+/** Switch to a given screen, then launch native AR (Quick Look) for it. */
+async function launchQuickLookForScreen(screenId) {
+    if (screenId) switchToScreen(screenId, { silent: true });
+    await launchQuickLookForActiveScreen();
+}
 
+/** Open the mobile screen-selector that lists every screen for AR / tap-through. */
+function escapeHtmlAttr(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+    );
+}
+
+// Sync check used at startup to skip the login flash when a QR link is opened.
+function isMobilePreviewUrl() {
+    return new URLSearchParams(window.location.search).get('voidMobilePreview') === '1';
+}
+
+function showMobileViewerLoading(on, message) {
+    let el = document.getElementById('void-mobile-loading');
+    if (on) {
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'void-mobile-loading';
+            el.className = 'void-mobile-loading';
+            el.innerHTML =
+                '<div class="vml-brand">VOID</div><div class="vml-spinner"></div><div class="vml-msg">Loading prototype…</div>';
+            document.body.appendChild(el);
+        }
+        if (message) el.querySelector('.vml-msg').textContent = message;
+        return;
+    }
+    if (!el) return;
+    if (message) {
+        el.classList.add('is-error');
+        el.querySelector('.vml-spinner')?.remove();
+        el.querySelector('.vml-msg').textContent = message;
+        return;
+    }
+    el.remove();
+}
+
+// ===== Template preview harness =====
+// Open ?voidPreview=1 (optionally &t=aura&s=aura-home) for a clean, chrome-free view
+// of any template with app + screen tabs — a fast way to iterate on template designs.
+function isTemplatePreviewUrl() {
+    return new URLSearchParams(window.location.search).get('voidPreview') === '1';
+}
+
+function enterTemplatePreview() {
+    document.body.classList.add('void-mobile-viewer', 'void-preview');
     setAppPhase('editor');
-    applyVoidImport(payload);
-    setViewMode('3d');
+    const q = new URLSearchParams(window.location.search);
+    loadPreviewTemplate(q.get('t') || 'aura', q.get('s') || '');
+}
 
-    const old = document.getElementById('void-mobile-ar-launch');
-    if (old) old.remove();
-    const launcher = document.createElement('div');
-    launcher.id = 'void-mobile-ar-launch';
-    launcher.style.cssText = `
-        position: fixed;
-        left: 12px;
-        right: 12px;
-        bottom: 12px;
-        z-index: 11000;
-        background: rgba(15,23,42,0.95);
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 16px;
-        color: #e2e8f0;
-        font: 13px/1.4 Figtree, Inter, system-ui, -apple-system, sans-serif;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-    `;
-    launcher.innerHTML = `
-        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">iPhone AR Preview Ready</div>
-        <div style="color:#94a3b8; margin-bottom:12px; font-size:12px;">Choose how you want to experience the spatial layout on this iPhone:</div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-            <button id="void-mobile-web-ar-btn" style="width:100%; padding:11px 12px; border-radius:8px; border:none; background:#6b6bff; color:white; font-weight:600; cursor:pointer; font-size:13px; font-family: inherit;">
-                Launch Web AR (QR Code Anchor)
-            </button>
-            <button id="void-mobile-ar-launch-btn" style="width:100%; padding:11px 12px; border-radius:8px; border:1px solid #334155; background:#1e293b; color:#cbd5e1; font-weight:600; cursor:pointer; font-size:13px; font-family: inherit;">
-                Launch AR Quick Look (Surface Placement)
-            </button>
+function loadPreviewTemplate(id, screenId) {
+    const meta = VOID_TEMPLATES.find((t) => t.id === id) || VOID_TEMPLATES[0];
+    const data = buildTemplateExport(meta.id);
+    state.currentProjectName = meta.projectName;
+    applyVoidImport(data);
+    setViewMode('2d');
+    setEditorMode('prototype');
+    if (screenId && state.screens.some((s) => s.id === screenId)) {
+        switchToScreen(screenId, { silent: true });
+    }
+    requestAnimationFrame(() => onWindowResize());
+    buildPreviewBar(meta.id);
+}
+
+function buildPreviewBar(activeTemplate) {
+    document.getElementById('void-preview-bar')?.remove();
+    const bar = document.createElement('div');
+    bar.id = 'void-preview-bar';
+    bar.className = 'void-preview-bar';
+    const apps = VOID_TEMPLATES
+        .map((t) => `<button class="vpb-tab${t.id === activeTemplate ? ' is-on' : ''}" data-t="${t.id}">${escapeHtmlAttr(t.projectName)}</button>`)
+        .join('');
+    const screens = state.screens
+        .map((s) => `<button class="vpb-screen${s.id === state.activeScreenId ? ' is-on' : ''}" data-s="${s.id}">${escapeHtmlAttr(s.name)}</button>`)
+        .join('');
+    bar.innerHTML = `
+        <div class="vpb-row vpb-row--apps"><span class="vpb-label">PREVIEW</span>${apps}</div>
+        <div class="vpb-row vpb-row--screens">${screens}</div>`;
+    document.body.appendChild(bar);
+    bar.querySelectorAll('.vpb-tab').forEach((b) => b.addEventListener('click', () => loadPreviewTemplate(b.dataset.t)));
+    bar.querySelectorAll('.vpb-screen').forEach((b) =>
+        b.addEventListener('click', () => {
+            switchToScreen(b.dataset.s, { silent: true });
+            buildPreviewBar(activeTemplate);
+        })
+    );
+}
+
+/**
+ * Phone viewer: load the shared scene and drop straight into a clean, fullscreen,
+ * 2D interactive prototype — no login, no editor chrome, no dev tools. Tapping a
+ * button navigates between screens. A small bar gives access to per-screen AR.
+ */
+async function enterMobilePreviewExperience() {
+    document.body.classList.add('void-mobile-viewer');
+    showMobileViewerLoading(true);
+
+    const payload = await getMobilePreviewPayloadFromUrl();
+    setAppPhase('editor'); // editor chrome stays hidden via the body class
+    if (!payload) {
+        showMobileViewerLoading(false, 'Could not load this preview. Re-open the QR from the desktop.');
+        return;
+    }
+    if (payload.projectName) state.currentProjectName = payload.projectName;
+    applyVoidImport(payload);
+
+    startMobilePlayFlow();
+    requestAnimationFrame(() => {
+        onWindowResize();
+        showMobileViewerLoading(false);
+    });
+}
+
+/** Clean fullscreen 2D interactive prototype for phones (no chrome, tap to navigate). */
+function startMobilePlayFlow() {
+    document.getElementById('void-mobile-selector')?.remove();
+    document.body.classList.add('void-mobile-viewer', 'void-mobile-play');
+
+    if (state.screens[0]) switchToScreen(state.screens[0].id, { silent: true });
+    if (typeof setViewMode === 'function') setViewMode('2d');
+    if (typeof setEditorMode === 'function') setEditorMode('prototype');
+    if (state.controls) {
+        state.controls.enabled = true;
+        state.controls.enablePan = true;
+        state.controls.enableZoom = true;
+    }
+    requestAnimationFrame(() => onWindowResize());
+
+    if (!document.getElementById('void-mobile-bar')) {
+        // Spatial VOID (markerless SLAM) where supported; native Quick Look only on iPhone/iPad.
+        const voidArBtn = isVoidARSupported()
+            ? '<button type="button" class="vmb-btn vmb-btn--accent" id="vmb-voidar">Spatial VOID</button>'
+            : '';
+        const nativeArBtn = supportsQuickLookAR()
+            ? '<button type="button" class="vmb-btn" id="vmb-ar">Native AR</button>'
+            : '';
+        const bar = document.createElement('div');
+        bar.id = 'void-mobile-bar';
+        bar.className = 'void-mobile-bar';
+        bar.innerHTML = `
+            <span class="vmb-name">${escapeHtmlAttr(state.currentProjectName || 'Prototype')}</span>
+            <span class="vmb-spacer"></span>
+            <button type="button" class="vmb-btn" id="vmb-home">Restart</button>
+            ${nativeArBtn}
+            ${voidArBtn}`;
+        document.body.appendChild(bar);
+        bar.querySelector('#vmb-home')?.addEventListener('click', () => {
+            if (state.screens[0]) switchToScreen(state.screens[0].id, { silent: true });
+            showNotification('Back to start');
+        });
+        bar.querySelector('#vmb-ar')?.addEventListener('click', () => openMobileScreenSelector());
+        bar.querySelector('#vmb-voidar')?.addEventListener('click', () => launchVoidAR());
+    }
+}
+
+/** Launch the white-labeled Spatial VOID (AR) mode; fall back gracefully if it can't start. */
+async function launchVoidAR() {
+    showNotification('Starting Spatial VOID…');
+    try {
+        await startVoidAR(buildVoidExport(), state.activeScreenId, {});
+    } catch (err) {
+        console.warn('Spatial VOID unavailable:', err);
+        if (supportsQuickLookAR()) {
+            showNotification('Spatial VOID unavailable — opening native AR');
+            openMobileScreenSelector();
+        } else {
+            showNotification(`Spatial VOID unavailable: ${err?.message || 'unsupported device'}`);
+        }
+    }
+}
+
+/** Secondary overlay: list every screen; tap one to place it in the room via native AR. */
+function openMobileScreenSelector() {
+    document.getElementById('void-mobile-selector')?.remove();
+    const projectName = state.currentProjectName || 'Your Project';
+
+    const wrap = document.createElement('div');
+    wrap.id = 'void-mobile-selector';
+    wrap.className = 'void-mobile-selector';
+
+    const rows = state.screens
+        .map((s, i) => {
+            const count = s.group?.children?.filter((c) => c.userData && !c.userData.isEnvironment).length || 0;
+            return `
+            <li class="vms-row" data-screen="${s.id}">
+                <span class="vms-index">${i + 1}</span>
+                <span class="vms-meta">
+                    <span class="vms-name">${escapeHtmlAttr(s.name)}</span>
+                    <span class="vms-sub">${count} element${count === 1 ? '' : 's'}</span>
+                </span>
+                <span class="vms-ar-go">Place ›</span>
+            </li>`;
+        })
+        .join('');
+
+    wrap.innerHTML = `
+        <div class="vms-card">
+            <button type="button" class="vms-close" id="vms-close" aria-label="Done">Done</button>
+            <div class="vms-head">
+                <div class="vms-brand">VIEW IN AR</div>
+                <h1 class="vms-title">${escapeHtmlAttr(projectName)}</h1>
+                <p class="vms-tagline">Tap a screen to place it in your room with the iPhone camera.</p>
+            </div>
+            <ul class="vms-list">${rows}</ul>
         </div>
     `;
-    document.body.appendChild(launcher);
+    document.body.appendChild(wrap);
 
-    launcher.querySelector('#void-mobile-web-ar-btn')?.addEventListener('click', () => {
-        launcher.remove();
-        openSpatialPreview(true);
-    });
-
-    launcher.querySelector('#void-mobile-ar-launch-btn')?.addEventListener('click', () => {
-        launcher.remove();
-        launchQuickLookForActiveScreen();
+    wrap.querySelector('#vms-close')?.addEventListener('click', () => wrap.remove());
+    wrap.querySelectorAll('.vms-row').forEach((row) => {
+        row.addEventListener('click', () => launchQuickLookForScreen(row.dataset.screen));
     });
 }
 function estimateQRPose(code, videoWidth, videoHeight) {
@@ -5043,7 +5671,52 @@ function teardownSpatialPreviewXR({ endSession = false } = {}) {
     state.spatialXR = null;
 }
 
-async function openSpatialPreview(forceWebAR = false) {
+/**
+ * Position the perspective camera so the active screen is fully in frame, viewed
+ * front-on (straight down -Z), out in space — the same orientation as the editor's
+ * 2D front view. Distance is derived from the screen's bounding box and the camera FOV.
+ */
+function frameCameraToActiveScreen(margin = 1.18) {
+    const cam = state.perspectiveCamera;
+    if (!cam) return;
+    const group = getActiveScreenGroup();
+    const fallback = () => {
+        cam.position.set(0, 0, 1.8);
+        cam.quaternion.set(0, 0, 0, 1);
+        cam.updateMatrixWorld(true);
+    };
+    if (!group) return fallback();
+
+    group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(group);
+    if (box.isEmpty()) return fallback();
+
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    const host = document.getElementById('spatial-preview-canvas-host');
+    const aspect = host && host.clientHeight ? host.clientWidth / host.clientHeight : (cam.aspect || 16 / 9);
+    const fov = (cam.fov || 50) * Math.PI / 180;
+    const distV = (size.y / 2) / Math.tan(fov / 2);
+    const distH = (size.x / 2) / (Math.tan(fov / 2) * aspect);
+    const dist = Math.max(distV, distH, 0.5) * margin + size.z / 2;
+
+    cam.aspect = aspect;
+    cam.up.set(0, 1, 0);
+    cam.position.set(center.x, center.y, center.z + dist);
+    cam.lookAt(center); // directly in front → front-on, no tilt
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    if (state.controls) state.controls.target.copy(center);
+}
+
+async function openSpatialPreview(opts = false) {
+    // Back-compat: callers pass a boolean (forceWebAR) or an options object.
+    const o = typeof opts === 'boolean' ? { forceWebAR: opts } : (opts || {});
+    const forceWebAR = !!o.forceWebAR || !!o.interactive;
+    const interactive = !!o.interactive;
+    state.spatialPreviewInteractive = interactive;
+
     const overlay = document.getElementById('spatial-preview-overlay');
     const video = document.getElementById('spatial-preview-video');
     const host = document.getElementById('spatial-preview-canvas-host');
@@ -5101,15 +5774,37 @@ async function openSpatialPreview(forceWebAR = false) {
         // Hide floor, grids, axes, safe zone — only UI frames/components draw over the camera.
         enterSpatialPreviewEnvironment();
 
-        // Save camera pose and controls state before overriding them
+        // Save the original active camera's pose/controls BEFORE we override anything, so
+        // close() can restore the editor exactly as it was.
+        state.savedViewModeForPreview = state.viewMode;
+        state.savedActiveCameraForPreview = state.camera;
         state.savedCameraPosition = state.camera.position.clone();
         state.savedCameraQuaternion = state.camera.quaternion.clone();
         state.savedControlsTarget = state.controls ? state.controls.target.clone() : null;
         state.savedControlsEnabled = state.controls ? state.controls.enabled : true;
 
+        // Camera passthrough AR needs the PERSPECTIVE camera so the live video and the 3D
+        // projection match. In 2D the active camera is orthographic and sits in the UI plane,
+        // which renders the screen edge-on — switch to perspective before framing.
+        if (state.camera !== state.perspectiveCamera) {
+            switchActiveCamera(state.perspectiveCamera);
+        }
+
         if (state.controls) state.controls.enabled = false;
-        state.camera.position.set(0, 0, 0);
-        state.camera.quaternion.set(0, 0, 0, 1);
+        if (o.qr) {
+            // Legacy QR-anchored mode (secondary): camera represents the phone at origin and
+            // the active screen is moved onto the detected QR pose each frame.
+            state.spatialPreviewQRMode = true;
+            state.camera.position.set(0, 0, 0);
+            state.camera.quaternion.set(0, 0, 0, 1);
+        } else {
+            // Default: frame the active screen front-on and out in space, matching the exact
+            // orientation seen in the editor's front (2D) view. Tap-to-navigate in interactive.
+            state.spatialPreviewQRMode = false;
+            switchToScreen(state.activeScreenId || state.screens[0]?.id, { silent: true });
+            frameCameraToActiveScreen(1.18);
+            if (interactive && state.editorMode !== 'prototype') setEditorMode('prototype');
+        }
 
         // On iOS Safari in Web AR mode, show a switch button to native Quick Look
         if (isIPhoneSafari()) {
@@ -5135,8 +5830,14 @@ async function openSpatialPreview(forceWebAR = false) {
         overlay.setAttribute('aria-hidden', 'false');
         onWindowResize();
 
-        updateSpatialPreviewHint('Point camera at the QR code on your screen to anchor UI.');
-        showNotification('Spatial preview');
+        updateSpatialPreviewHint(
+            interactive
+                ? 'Interactive AR — tap buttons to navigate between screens.'
+                : o.qr
+                    ? 'Point camera at the QR code on your screen to anchor UI.'
+                    : 'Your UI in space. Scan the share QR to open it on your iPhone.'
+        );
+        showNotification(interactive ? 'Interactive AR preview' : 'Spatial preview');
         updateTransformControlsForViewMode();
     } catch (err) {
         state.spatialPreviewKind = null;
@@ -5182,6 +5883,15 @@ function closeSpatialPreview() {
         state.originalScreenPoses = null;
     }
 
+    // Restore the active camera object (we forced perspective for the AR passthrough).
+    if (state.savedActiveCameraForPreview) {
+        if (state.camera !== state.savedActiveCameraForPreview) {
+            switchActiveCamera(state.savedActiveCameraForPreview);
+        }
+        state.savedActiveCameraForPreview = null;
+        state.savedViewModeForPreview = null;
+    }
+
     // Restore original camera pose and controls state
     if (state.savedCameraPosition) {
         state.camera.position.copy(state.savedCameraPosition);
@@ -5206,6 +5916,11 @@ function closeSpatialPreview() {
         state.savedSceneBackground = null;
     }
     if (state.renderer) state.renderer.setClearAlpha(1);
+    // Leave interactive AR: drop prototype mode back to design so the editor is normal.
+    if (state.spatialPreviewInteractive) {
+        if (state.editorMode === 'prototype') setEditorMode('design');
+        state.spatialPreviewInteractive = false;
+    }
     state.spatialPreviewActive = false;
     state.spatialPreviewKind = null;
     if (overlay) {
@@ -5213,6 +5928,9 @@ function closeSpatialPreview() {
         overlay.setAttribute('aria-hidden', 'true');
     }
     document.getElementById('void-mobile-preview-share')?.remove();
+    // Bring the mobile screen-selector back if it was hidden behind interactive AR.
+    const mobileSel = document.getElementById('void-mobile-selector');
+    if (mobileSel) mobileSel.style.display = '';
     onWindowResize();
     updateTransformControlsForViewMode();
     showNotification('Preview closed');
@@ -5304,20 +6022,24 @@ function ensureEditorExperienceInitialized() {
  * Switch onboarding / shell phase. Does not alter editor DOM; only visibility + deferred init.
  */
 function setAppPhase(phase) {
-    const allowed = ['login', 'dashboard', 'editor'];
+    const allowed = ['login', 'dashboard', 'templates', 'editor'];
     if (!allowed.includes(phase)) return;
     const prev = state.appPhase;
     state.appPhase = phase;
 
     const login = document.getElementById('phase-login');
     const dash = document.getElementById('phase-dashboard');
+    const templates = document.getElementById('phase-templates');
     const editor = document.getElementById('phase-editor');
     const nav = document.getElementById('app-top-nav');
 
     if (login) login.hidden = phase !== 'login';
     if (dash) dash.hidden = phase !== 'dashboard';
+    if (templates) templates.hidden = phase !== 'templates';
     if (editor) editor.hidden = phase !== 'editor';
     if (nav) nav.hidden = phase === 'login';
+
+    if (phase === 'templates') renderTemplatePicker();
 
     if (phase === 'login') {
         initLoginScene();
@@ -5326,7 +6048,7 @@ function setAppPhase(phase) {
         disposeLoginScene();
     }
 
-    if (phase === 'dashboard' || phase === 'editor') {
+    if (phase === 'dashboard' || phase === 'templates' || phase === 'editor') {
         requestAnimationFrame(() => initTopNavStarfield());
     }
 
@@ -5339,21 +6061,127 @@ function setAppPhase(phase) {
     }
 }
 
+// Map the dashboard's "recent project" cards to the matching starter template.
+const DASHBOARD_CARD_TEMPLATE = {
+    'Meditation App': 'aura',
+    'Product Demo': 'orbit',
+    'XR Workshop': 'forge'
+};
+
+/**
+ * Load a starter template into the editor: initialize the editor, then rebuild
+ * the scene from the template's Void export and open it in design view.
+ */
+function loadTemplateProject(templateId) {
+    const data = buildTemplateExport(templateId);
+    if (!data) {
+        // Unknown id → treat as blank project.
+        openBlankProject();
+        return;
+    }
+    setAppPhase('editor');
+    const ok = applyVoidImport(data);
+    if (ok) {
+        const meta = VOID_TEMPLATES.find((t) => t.id === templateId);
+        state.currentProjectName = meta?.projectName || 'Untitled';
+        if (typeof setViewMode === 'function') setViewMode('2d');
+        showNotification(`Opened “${state.currentProjectName}” template`);
+    }
+}
+
+function openBlankProject() {
+    setAppPhase('editor');
+    state.currentProjectName = 'Untitled';
+    if (typeof setViewMode === 'function') setViewMode('2d');
+}
+
+/** Render the template picker cards from the shared VOID_TEMPLATES catalog. */
+function renderTemplatePicker() {
+    const grid = document.getElementById('templates-grid');
+    if (!grid || grid.dataset.rendered === '1') return;
+
+    const blank = document.createElement('article');
+    blank.className = 'dashboard-project-card dashboard-project-card--new template-card';
+    blank.setAttribute('role', 'button');
+    blank.tabIndex = 0;
+    blank.dataset.template = 'blank';
+    blank.innerHTML = `
+        <div class="dashboard-card-thumb">
+            <i data-lucide="plus"></i>
+        </div>
+        <div class="dashboard-card-info">
+            <span class="dashboard-project-name">Blank Canvas</span>
+            <span class="dashboard-project-meta">Start from an empty screen</span>
+        </div>`;
+    grid.appendChild(blank);
+
+    VOID_TEMPLATES.forEach((t) => {
+        const card = document.createElement('article');
+        card.className = 'dashboard-project-card template-card';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
+        card.dataset.template = t.id;
+        card.innerHTML = `
+            <div class="dashboard-card-thumb template-card-thumb" style="--tpl-accent:${t.accent}">
+                <span class="template-card-glyph" style="background:${t.accent}"></span>
+                <span class="template-card-screens">${t.screens} screens</span>
+            </div>
+            <div class="dashboard-card-info">
+                <span class="dashboard-project-name">${t.projectName}</span>
+                <span class="dashboard-project-meta">${t.tagline}</span>
+                <span class="dashboard-device-tag">${t.device}</span>
+            </div>`;
+        grid.appendChild(card);
+    });
+
+    grid.addEventListener('click', (e) => {
+        const card = e.target.closest('.template-card');
+        if (!card) return;
+        const id = card.dataset.template;
+        if (id === 'blank') openBlankProject();
+        else loadTemplateProject(id);
+    });
+    grid.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const card = e.target.closest('.template-card');
+        if (!card) return;
+        e.preventDefault();
+        if (card.dataset.template === 'blank') openBlankProject();
+        else loadTemplateProject(card.dataset.template);
+    });
+
+    grid.dataset.rendered = '1';
+    initializeLucideIcons();
+}
+
 function initializeOnboardingFlow() {
     document.getElementById('btn-onboarding-login')?.addEventListener('click', () => {
         setAppPhase('dashboard');
     });
     document.getElementById('btn-onboarding-guest')?.addEventListener('click', () => {
-        setAppPhase('editor');
+        setAppPhase('templates');
     });
+    // New Project → template picker
     document.getElementById('btn-onboarding-create-project')?.addEventListener('click', () => {
-        setAppPhase('editor');
+        setAppPhase('templates');
     });
     document.getElementById('dashboard-new-project-card')?.addEventListener('click', () => {
-        setAppPhase('editor');
+        setAppPhase('templates');
+    });
+    // Recent project cards → load their matching template directly
+    document.querySelector('#phase-dashboard .dashboard-project-grid')?.addEventListener('click', (e) => {
+        const card = e.target.closest('.dashboard-project-card');
+        if (!card || card.id === 'dashboard-new-project-card') return;
+        const name = card.querySelector('.dashboard-project-name')?.textContent?.trim() || '';
+        const tplId = DASHBOARD_CARD_TEMPLATE[name];
+        if (tplId) loadTemplateProject(tplId);
+        else openBlankProject();
+    });
+    document.getElementById('templates-back')?.addEventListener('click', () => {
+        setAppPhase('dashboard');
     });
     document.getElementById('app-nav-dashboard')?.addEventListener('click', () => {
-        if (state.appPhase === 'editor') {
+        if (state.appPhase === 'editor' || state.appPhase === 'templates') {
             if (state.spatialPreviewActive) closeSpatialPreview();
             setAppPhase('dashboard');
         }
@@ -5392,14 +6220,22 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeLucideIcons();
     applyGlobalTooltips();
     updateViewportEmptyState();
-    initializeIPhoneQuickLookEntry();
 
     // 3D viewport + scene: deferred until setAppPhase('editor') — see ensureEditorExperienceInitialized().
 
     console.log('Initial state:', state);
 
     initVoidRemoteSync();
-    setAppPhase('login');
+
+    // A scanned QR opens the clean phone viewer directly — never flash login/editor chrome.
+    // ?voidPreview=1 opens the clean template-preview harness (for design iteration).
+    if (isTemplatePreviewUrl()) {
+        enterTemplatePreview();
+    } else if (isMobilePreviewUrl()) {
+        enterMobilePreviewExperience();
+    } else {
+        setAppPhase('login');
+    }
 });
 
 // ===== EXPORT FOR DEBUGGING =====
